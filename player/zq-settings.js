@@ -291,10 +291,7 @@
       background:#F0F0F0;color:#6d6d6d;font:600 15px system-ui,sans-serif}
     #zq-panel button.on{background:#105bf1;color:#fff}
     #zq-panel .apply{width:100%;margin-top:16px;background:#105bf1;color:#fff}
-    #zq-panel .check{width:100%;margin-top:8px}
     #zq-panel .info{margin-top:12px;font-size:12px;color:#999;line-height:1.5;overflow-wrap:anywhere}
-    #zq-panel .probe{margin-top:12px;font-size:12px;color:#555;line-height:1.5}
-    #zq-panel .probe:empty{display:none}
     /* Debug overlay over the CarPlay picture: text only, never takes a touch */
     #zq-debug{position:fixed;top:8px;right:8px;z-index:99998;pointer-events:none;padding:6px 8px;
       border-radius:8px;background:#000a;color:#0f0;font:12px/1.35 ui-monospace,monospace;white-space:pre}
@@ -397,58 +394,6 @@
     return [h, row];
   }
 
-  // HEVC decoder check (docs/HEVC_RESEARCH.md, test 1): asks WebCodecs whether
-  // this browser could decode HEVC at the current stream size. A support query
-  // only; it decodes nothing and says nothing about speed. H.264 is the baseline.
-  const PROBE_CODECS = [
-    ["avc1.640033", "H.264 High 5.1"],
-    ["hvc1.1.6.L123.B0", "HEVC Main 4.1 hvc1"],
-    ["hev1.1.6.L123.B0", "HEVC Main 4.1 hev1"],
-    ["hvc1.1.6.L153.B0", "HEVC Main 5.1 hvc1"],
-    ["hev1.1.6.L153.B0", "HEVC Main 5.1 hev1"],
-    ["hvc1.2.4.L153.B0", "HEVC Main10 5.1 hvc1"],
-  ];
-  const PROBE_ACCEL = [["prefer-hardware", "hw"], ["no-preference", "any"]];
-
-  // The size the patched bundle requests: window × scale, capped at maxh.
-  function streamSize() {
-    const el = document.documentElement;
-    let w = (el.clientWidth || window.innerWidth || 1280) * window.__zq.scale;
-    let h = (el.clientHeight || window.innerHeight || 720) * window.__zq.scale;
-    if (h > window.__zq.maxh) {
-      w = (window.__zq.maxh * w) / h;
-      h = window.__zq.maxh;
-    }
-    return [Math.round(w / 2) * 2, Math.round(h / 2) * 2];
-  }
-
-  async function probeDecoders() {
-    const [codedWidth, codedHeight] = streamSize();
-    const lines = [`Decoder check ${codedWidth}×${codedHeight}`];
-    if (typeof VideoDecoder === "undefined" || !VideoDecoder.isConfigSupported) {
-      lines.push("WebCodecs VideoDecoder unavailable");
-      return lines;
-    }
-    const results = [];
-    for (const [codec, label] of PROBE_CODECS) {
-      const parts = [];
-      for (const [hardwareAcceleration, short] of PROBE_ACCEL) {
-        let r;
-        try {
-          r = (await VideoDecoder.isConfigSupported({codec, codedWidth, codedHeight, hardwareAcceleration}))
-            .supported ? "yes" : "no";
-        } catch (e) {
-          r = "error";
-        }
-        parts.push(`${short} ${r}`);
-        results.push({codec, codedWidth, codedHeight, hardwareAcceleration, result: r});
-      }
-      lines.push(`${label}: ${parts.join(" · ")}`);
-    }
-    console.log("[zq] decoder check", JSON.stringify(results));
-    return lines;
-  }
-
   function buildUI() {
     const style = document.createElement("style");
     style.textContent = CSS;
@@ -461,7 +406,6 @@
     panel.id = "zq-panel";
 
     const draft = {...settings};
-    let probe = null; // decoder check result lines, kept across re-renders
     let codecError = "";
     function refreshCodecStatus() {
       if (!NATIVE_HEVC) return;
@@ -490,20 +434,6 @@
         save(draft);
         location.reload();
       };
-      const check = document.createElement("button");
-      check.className = "check";
-      check.textContent = "Check HEVC decoder";
-      check.onclick = () => {
-        probe = ["Checking…"];
-        render();
-        probeDecoders().then(lines => {
-          probe = lines;
-          render();
-        });
-      };
-      const probeInfo = document.createElement("div");
-      probeInfo.className = "probe";
-      if (probe) probeInfo.replaceChildren(...probe.flatMap((l, i) => (i ? [document.createElement("br"), l] : [l])));
       const info = document.createElement("div");
       info.className = "info stream-info";
       const codecHelp = document.createElement("div");
@@ -511,7 +441,7 @@
       codecHelp.textContent = NATIVE_HEVC
         ? "H.264 / HEVC changes take effect after you reconnect your phone. Reloading this page alone keeps the current codec. For JPEG, disconnect the phone before saving, then reconnect."
         : "HEVC selection requires the native codec-switch package. Stream stats show the codec currently received.";
-      panel.append(codecHelp, apply, check, probeInfo, info);
+      panel.append(codecHelp, apply, info);
       updateInfo();
     }
 
