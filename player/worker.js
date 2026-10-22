@@ -41,6 +41,8 @@ let ctx = null;
 let decoder = null;
 let codec = "";
 let tuned = true; // cleared once the browser refuses optimizeForLatency/prefer-hardware
+let hevc = false; // the stream is HEVC (set on its first VPS, reset with the renderer)
+let hevcTag = "hvc1"; // "hev1" once the browser refuses hvc1 for Annex B input
 let waitingForKeyFrame = true;
 let waitingSince = 0;
 let timestamp = 0;
@@ -71,7 +73,7 @@ let lastShow = 0;
 let lastShownStamp = -1; // timestamp of the last frame drawn, to keep display order
 let pending = 0;
 
-const stats = {inFrames: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0};
+const stats = {inFrames: 0, inBytes: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0};
 
 function sendLog(message) {
   self.postMessage(message);
@@ -81,8 +83,35 @@ function hex(b) {
   return b.toString(16).padStart(2, "0");
 }
 
+// RFC 6381 / ISO 14496-15 codec string from an HEVC SPS (Annex B, starting at
+// its 2-byte NAL header): hvc1.<space><profile>.<compat>.<tier><level>.<constraints>.
+function hevcCodec(data, at) {
+  // Unescape the fixed-size profile_tier_level prefix (00 00 03 -> 00 00).
+  const b = [];
+  let zeros = 0;
+  for (let i = at + 2; i < data.length && b.length < 13; i++) {
+    if (zeros >= 2 && data[i] === 3) {
+      zeros = 0;
+      continue;
+    }
+    zeros = data[i] === 0 ? zeros + 1 : 0;
+    b.push(data[i]);
+  }
+  if (b.length < 13) return "";
+  const space = ["", "A", "B", "C"][b[1] >> 6];
+  const tier = b[1] & 0x20 ? "H" : "L";
+  const profile = b[1] & 0x1f;
+  let compat = 0; // general_profile_compatibility_flags, bit order reversed
+  for (let i = 0; i < 32; i++) if (b[2 + (i >> 3)] & (0x80 >> (i & 7))) compat |= 1 << i;
+  const constraints = b.slice(6, 12);
+  while (constraints.length && constraints[constraints.length - 1] === 0) constraints.pop();
+  return [`${hevcTag}.${space}${profile}`, (compat >>> 0).toString(16).toUpperCase(), `${tier}${b[12]}`,
+    ...constraints.map(c => c.toString(16).toUpperCase())].join(".");
+}
+
 // Walks the Annex B NAL headers up to the first slice. Parameter sets precede
 // the picture data, so the slice payload (most of the buffer) is never scanned.
+// HEVC is recognised by its VPS (40 01), which is not a valid H.264 NAL header.
 function inspect(data) {
   let key = false;
   let spsCodec = "";
@@ -93,13 +122,26 @@ function inspect(data) {
     if (data[i + 2] === 1) at = i + 3;
     else if (data[i + 2] === 0 && data[i + 3] === 1 && i + 4 < n) at = i + 4;
     else continue;
-    const type = data[at] & 0x1f;
-    if (type === 7 && at + 3 < n) {
-      key = true;
-      spsCodec = `avc1.${hex(data[at + 1])}${hex(data[at + 2])}${hex(data[at + 3])}`;
-    } else if (type >= 1 && type <= 5) {
-      if (type === 5) key = true;
-      break; // slice data follows
+    if (data[at] === 0x40 && data[at + 1] === 0x01) hevc = true;
+    else if (data[at] === 0x67) hevc = false; // H.264 SPS; a reserved type in HEVC
+    if (hevc) {
+      const type = (data[at] >> 1) & 0x3f;
+      if (type === 33) {
+        key = true;
+        spsCodec = hevcCodec(data, at);
+      } else if (type < 32) {
+        if (type >= 16 && type <= 21) key = true; // IRAP: BLA, IDR, CRA
+        break; // slice data follows
+      }
+    } else {
+      const type = data[at] & 0x1f;
+      if (type === 7 && at + 3 < n) {
+        key = true;
+        spsCodec = `avc1.${hex(data[at + 1])}${hex(data[at + 2])}${hex(data[at + 3])}`;
+      } else if (type >= 1 && type <= 5) {
+        if (type === 5) key = true;
+        break; // slice data follows
+      }
     }
     i = at;
   }
@@ -232,6 +274,9 @@ function openDecoder(newCodec) {
       if (e.name === "NotSupportedError" && tuned) {
         tuned = false; // retry without the latency/hardware hints
         sendLog("falling back to a plain decoder config");
+      } else if (e.name === "NotSupportedError" && hevcTag === "hvc1" && codec.startsWith("hvc1.")) {
+        hevcTag = "hev1"; // the next SPS builds an hev1 string
+        sendLog("falling back to hev1");
       }
       // The browser has already closed it; drop it even if resync() is
       // rate-limited, so the next SPS reopens instead of decoding into a
@@ -357,6 +402,7 @@ function decodeH264(data) {
 }
 
 function handleData(d) {
+  stats.inBytes += d.length;
   if (d.length >= 2 && d[0] === 0xff && d[1] === 0xd8) drawJPEG(d);
   else decodeH264(d);
 }
@@ -427,6 +473,7 @@ setInterval(() => {
   self.postMessage({
     id: "stats",
     inFps: stats.inFrames,
+    inKbps: Math.round((stats.inBytes * 8) / 1000),
     fps: stats.shown,
     decodeMs: Math.round(stats.decodeMs),
     queue: decoder ? decoder.decodeQueueSize : 0,
@@ -439,6 +486,7 @@ setInterval(() => {
     size: canvas ? `${canvas.width}x${canvas.height}` : "",
   });
   stats.inFrames = 0;
+  stats.inBytes = 0;
   stats.shown = 0;
 }, 1000);
 

@@ -126,6 +126,9 @@ can be upgraded while retaining this unit's existing authentication hardware.
    hardware preference. Follow any positive result by decoding a known HEVC
    sample and measuring output; support queries are not performance tests.
    A negative result for one profile/level does not exclude every HEVC variant.
+   The Video panel's **Check HEVC decoder** button runs this query at the
+   current stream size (`hw` = `prefer-hardware`, `any` = `no-preference`) and
+   logs the full results as `[zq] decoder check` in the console.
 2. **Receiver capability:** Obtain a vendor compatibility statement or observe
    the owner's normal CarPlay session negotiation through supported diagnostics.
    Determine whether the phone proposes HEVC and the receiver accepts it. Keep
