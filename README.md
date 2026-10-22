@@ -92,18 +92,30 @@ and ChaCha20 TLS launcher/config. Wi-Fi boot-script experiments remain opt-in.
 Experimental complete HEVC package, including the latest browser cleanup fix:
 
 ```sh
-python3 -I tools/build_patch.py --native-hevc --native-video-diag \
-  --keep-compressed-video-focus --version 2.9.11-oc8-hevc \
-  --out build/update_tesla_hevc_2.9.11-oc8-hevc.zip
+python3 -m venv build/crypto-env
+build/crypto-env/bin/pip install -r tools/requirements-crypto-neon.txt
+build/crypto-env/bin/python -I tools/build_patch.py --native-hevc --native-video-diag \
+  --keep-compressed-video-focus --version 2.9.11-oc11-hevc-neon \
+  --out build/update_tesla_hevc_2.9.11-oc11-hevc-neon.zip
 ```
 
 Native builds additionally need an ARM-capable Clang/LLD toolchain; see
-[the native path](docs/CARPLAY_HEVC_NATIVE_PATH.md). This package patches
+[the native path](docs/CARPLAY_HEVC_NATIVE_PATH.md). Every HEVC build now also
+includes the tested ChaCha20 NEON optimization, applied after the HEVC patches.
+Pinned public OpenSSL sources/license are downloaded into ignored
+`build/crypto-source` and verified; `--crypto-source <directory>` allows a prepared
+offline cache. Unknown source, compiled payload or derived receiver hashes fail
+the build. See [crypto release instructions](docs/CRYPTO_RELEASES.md) and
+[device results](docs/CRYPTO_RESEARCH.md).
+
+Browser/Wi-Fi-only updates leave the installed receiver untouched, preserving
+its NEON optimization. Native HEVC releases cannot silently drop NEON when adding
+other features. Stock restore is an intentional exception. This package patches
 `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`, `z-tesla` and `z-link.sh`,
 and includes the browser/TLS files. It can be installed directly over the supported stock
 2.9.11 base; earlier experimental packages are not prerequisites. Without an explicit `--version`, the focus option adds
 `-focus2` and native diagnostics add `-vdiag`. The release command above sets a
-fixed `2.9.11-oc8-hevc` version and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
+fixed `2.9.11-oc11-hevc-neon` version and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
 that option deliberately preserves the installed browser/TLS/Wi-Fi files.
 
 A new browser profile defaults to H.264. In Video, select a codec, use **Apply & reload**,
@@ -170,7 +182,7 @@ open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-serv
 
 | Script | Purpose |
 |---|---|
-| `tools/build_patch.py` | build the patched update package (`build/update_tesla.zip`, default version 2.9.11-oc8) |
+| `tools/build_patch.py` | build the update package (default 2.9.11-oc11; native HEVC includes NEON) |
 | `tools/flash.sh` | flash / roll back over the web UI: `status`, `update [zip]`, `rollback [zip]` |
 | `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
 | `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |
