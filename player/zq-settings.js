@@ -4,6 +4,8 @@
 // The "Video" button appears on the box's home screen (Tesla house icon).
 
 (function () {
+  const PROJECT = "ownice-tesla-carplay";
+  const PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay";
   const KEY = "zq.settings";
   const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false};
   const AUTO_MAX_HEIGHT = 1200; // Model 3/Y screen height; S/X browser windows are smaller than 1300
@@ -148,6 +150,8 @@
         if (s.smooth) lines.push(`Smooth delay ${s.delayMs} ms · late ${s.late}`);
         lines.push(`Resyncs ${s.resyncs}`);
       }
+      lines.push(`${PROJECT} · custom, unofficial`);
+      lines.push(PROJECT_URL);
       info.replaceChildren(...lines.flatMap((l, i) => (i ? [document.createElement("br"), l] : [l])));
     }
     setInterval(() => {

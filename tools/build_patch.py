@@ -29,6 +29,13 @@ BASE_URL = "https://cdn.zjinnova.com/tesla/en/update_tesla0817.zip"
 BASE_MD5 = "3a743be56b60df524825cffcf45238cd"
 BASE_WEBVERSION = "2.9.11"
 
+# Custom build identity. Keep the "-oc<N>" suffix so our version never equals a
+# vendor version string: the box's "Check for updates" re-offers stock whenever
+# current != the CDN's webver, so an always-distinct tag keeps stock rollback
+# working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
+PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay"
+CUSTOM_VERSION = "3.0-oc1"
+
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
 PLAYER_PATH = f"{WEB}/player.html"
@@ -85,7 +92,8 @@ def patch_index(html):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
-    ap.add_argument("--version", default="3.0", help="web version to report (default 3.0)")
+    ap.add_argument("--version", default=CUSTOM_VERSION,
+                    help=f"web version to report (default {CUSTOM_VERSION}); keep a non-vendor suffix")
     ap.add_argument("--out", default="build/update_tesla.zip")
     args = ap.parse_args()
 

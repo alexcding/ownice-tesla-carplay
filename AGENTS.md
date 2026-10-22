@@ -14,6 +14,12 @@ Notes for agents and contributors working on this repo.
   not guess.
 - Keep the package web-only: patched vendor web files, our own `player/*.js`, `webversion`, and the vendor's
   `update.sh`. No binaries.
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc1` (bump `-oc2`, `-oc3`…). Always keep
+  a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
+  "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
+  (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
+- **Never publish the vendor firmware zip** (it holds the private `*.key` TLS keys). `flash.sh rollback` pulls it
+  from the CDN on demand; don't commit or upload it anywhere public.
 - Target car: AMD Tesla (WebCodecs available). Default stream = **Auto**: browser window size at 1x,
   capped at 1200 tall. Don't default to devicePixelRatio scaling (too heavy; see Performance).
 
