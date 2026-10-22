@@ -1,0 +1,140 @@
+# User-selectable video codec (JPEG / H.264 / HEVC)
+
+Codec switch implemented in `3.0-oc7`; current package is `3.0-oc8`, adding
+[refresh keyframe requests](HEVC_RECONNECT_FIX.md). Not deployed. Native installation and restore
+require an explicit owner-triggered reboot before use. The earlier `3.0-oc6` native
+package advertises HEVC unconditionally and does not implement this switch.
+This targets only Ownice T3 firmware 2.9.11 / build 202402031913 and the three
+SHA-256 identities pinned by `tools/native_hevc.py`.
+
+## Owner-facing behavior
+
+The native package's Video panel offers HEVC, H.264 and JPEG. The browser sends
+`is_h264_mode` as an integer, preserving the existing protocol:
+
+| Mode | Receiver advertisement on next phone connection | Video path |
+|---|---|---|
+| 0 / JPEG | H.264 capability only | H.264 local decode, JPEG encoding |
+| 1 / H.264 | H.264 capability only | Compressed passthrough |
+| 2 / HEVC | Adds HEVC capability | Compressed passthrough |
+
+A new profile defaults to H.264 (1). Legacy boolean settings migrate to 1/0.
+An explicit saved mode 2 is retained by the native package, but clamped to 1
+by a web-only package. Invalid saved modes fall back to 1. The chosen setting
+requests a capability; the actual `hvc1`/`hev1` or `avc1` stream is shown in stats.
+
+**After installing or restoring native files, reboot the adapter.** Installation
+and restore log `REBOOT REQUIRED`; neither attempts a partial live restart.
+The independent `z-tesla` supervisor and the running `z-link.sh` shell must both
+load their new generation. No reboot is performed by the package.
+
+**Disconnect the phone, choose the codec, Apply & reload, then reconnect the
+phone.** The page sends INIT when the control socket opens, independently of
+phone connection. Reloading does not renegotiate an existing phone session.
+Selecting JPEG while an HEVC session is still running sends HEVC to the stock
+H.264-only local decoder and can produce a black screen until reconnection.
+Keep one player connected: concurrent clients can contend for the stream and
+last-written adapter setting.
+
+The dev proxy exposes the same options automatically: when serving
+`zq-settings.js` it reads the box's copy and sets `NATIVE_HEVC` only if the box
+runs the codec-switch package (`NATIVE_HEVC = true` plus the `vmode` option,
+3.0-oc7+). 3.0-oc6's unconditional HEVC receiver, a stock box, or an unreachable
+box all get the H.264/JPEG menu. (The former `--native-hevc` flag is removed.)
+
+## Native implementation and evidence
+
+Stock `z-tesla` SHA-256:
+`fabf68f52d56e487a591e1229c3e2fa3c9006a9efc91bb4af57c03f1bd501ed8`.
+Addresses below are ELF virtual addresses, not file offsets.
+
+- `0x1db40`: existing mode writer formats the integer and saves
+  `/data/local/tmp/local_is_h264` through `0x20b46`, then runs the stock sync.
+  Its shared exit `0x1dbaa` originally contains `mov r0,r3; adds r7,#0x48`
+  (bytes `18464837`). An exact four-byte branch now calls `zq_mode_saved`
+  with the stock result and saved mode, then resumes at `0x1dbae`. The original
+  stack restoration and return remain in place; no entry trampoline is needed.
+- After successful stock persistence, `tools/native/codec_mode.c` creates
+  `/data/local/tmp/zq_hevc` for mode 2 and removes it for every other value.
+  A failed original save leaves the flag unchanged. On save/flag failure the
+  helper attempts to persist safe mode 1 directly through `0x20b46`, avoiding
+  recursive calls to the writer hook. It records an error in `/zq-codec.txt`
+  when writable; the Video panel fetches this diagnostic when opened. A later
+  successful save clears it. Read-only/full storage can also prevent logging.
+- Existing imports `fopen`, `fclose`, `unlink`, `access`, `fwrite`, `system` suffice. No imports or
+  dynamic relocations are added. The containing directory already exists if the
+  stock mode save succeeds. A final constant `system("sync")` follows the flag
+  update/error recovery, in addition to the stock sync. The two files are not
+  an atomic transaction across power loss; the startup guard below handles the
+  unsafe JPEG/HEVC combination even if rollback persistence failed.
+- `tools/native/carplay_hevc.c`: both `/info`'s `hevcInfo` and SETUP's
+  `enabledFeatures:["hevc"]` are added only when the flag can be opened for read.
+  An absent/unreadable flag disables HEVC advertisement. Existing delegate
+  features and authentication/session checks are preserved.
+- `0x218c2` loads context `+0x44`; `0x218c4` compares against zero, and
+  `0x218c6` branches to local decode at `0x218dc` only for mode 0. Modes 1/2
+  fall through to compressed passthrough. The separate calls at `0x21312` and
+  `0x220ce` are sender call sites, **not additional mode comparisons**.
+- Direct mode-writer call sites observed at `0x22d0a` (INIT) and `0x230d0`
+  (runtime mode handler). Their previously ignored errors are handled by exact
+  four-byte continuation hooks at `0x22d0e` (`0023fb60`) and `0x230d4`
+  (`00231846`). A failure sets runtime context `+0x44` to 1; INIT's local mode
+  at frame `+0x18` is also set to 1 so its later assignment at `0x22db6` cannot
+  restore JPEG. The runtime handler returns the failure; INIT retains it in
+  its existing status local. Successful mode changes preserve stock behavior.
+- Startup mode reading has a shared exit hook at `0x1db30` (`18464037`),
+  resuming the original epilogue at `0x1db34`. If the saved mode is 0 or missing
+  but the HEVC flag is readable, the reader returns compressed mode 1. This
+  prevents a reboot into local H.264 decoding while HEVC is advertised.
+  These addresses were checked against LLVM 22 disassembly and exercised in
+  ARM emulation; they are not claims of device execution.
+
+REA/Hopper evidence for the writer's instructions, shared exit and incoming
+references: `ev_46ddd8b10c801e98fea24e11cf206a38d51b4e64079509117af0866b2ecd1982`.
+LLVM 22 disassembly independently verified the exact patched instructions,
+continuation and video branch. Hopper does not expose complete function body
+ranges; its reference inventory cannot prove there are no other file writers.
+
+The flag is adapter-wide and persists wherever `/data/local/tmp` persists. Each
+phone reconnect reads it afresh. If the phone connects before the browser saves
+its selection, another reconnect may be necessary. Changing selection during
+negotiation is unsupported; use the disconnect/apply/reconnect sequence above.
+
+## Local validation and packages
+
+- 25 ARM-emulator tests execute the compiled handlers, stock writer (mocked file
+  helper/libc calls), original epilogue and original video mode branch. Shared
+  mocked files link mode changes to both actual advertisement hooks. Tests cover
+  transitions 1→2→1→2→0, missing flags, failed persistence/open/close/unlink,
+  both caller error continuations, startup inconsistency recovery,
+  register/stack preservation, relocated library loading, delegate fields,
+  malformed streams, AVC fallback and real HEVC decoded-pixel equivalence.
+- Seven package tests cover fresh install/restore, backup expansion, reinstall,
+  changed files/corrupted backups and package contents. Successful native restore
+  removes the flag and restores the five original native files.
+- `test_settings_codecs.mjs` tests settings migration, invalid modes, numeric
+  selections through the actual panel's Apply handler, reconnect guidance and
+  live codec stats. `test_worker_codecs.mjs` covers AVC/HEVC regression behavior.
+- All four packages build with strict patch anchors, version `3.0-oc8`:
+  `update_tesla_hevc_3.0-oc8.zip`, `native_test_3.0-oc8.zip`,
+  `restore_native_3.0-oc8.zip`, `update_tesla_3.0-oc8.zip` under ignored `build/`.
+
+The switch has **not been validated on the adapter**. Earlier live HEVC playback
+was observed in Mac Chrome with the unconditional patch; no Tesla browser was
+used in that validation. Filesystem permissions/lifetime, phone reconnection,
+actual H.264/JPEG restoration and watchdog recovery still need device checks.
+
+## Deployment and rollback
+
+No upload, reboot, phone reconnect or player/proxy restart was performed for
+this implementation. Deployment requires the owner's explicit approval under
+[AGENTS.md](../AGENTS.md).
+
+The HEVC package replaces `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`,
+`z-tesla`, `z-link.sh`, web player/settings/bundle, TLS launcher/config and webversion.
+Stock backups remain under `/misc/zq-native/stock`. The restore package runs
+that saved restore script, which puts back the five stock native files and
+clears the HEVC flag and codec error file. Reboot after installing or restoring
+native files before relying on them. The web player remains and can play H.264; mode 2 is still
+non-zero passthrough in stock `z-tesla`. Full stock recovery remains
+`tools/flash.sh rollback`. See [NATIVE_ROLLBACK.md](NATIVE_ROLLBACK.md).

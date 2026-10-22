@@ -72,6 +72,22 @@ def make_handler(args):
     box_ctx = ssl._create_unverified_context()
     stock = stock_player(args.firmware)
 
+    def box_native_hevc():
+        """Mirror the box's own NATIVE_HEVC, but only for the codec-switch package
+        (3.0-oc7+, whose settings carry the "vmode" codec option). 3.0-oc6 also set
+        NATIVE_HEVC yet advertises HEVC unconditionally, so its H.264/JPEG choices
+        would not apply. Unreachable or unknown means False (H.264/JPEG menu)."""
+        conn = http.client.HTTPSConnection(args.box, 443, context=box_ctx, timeout=3)
+        try:
+            conn.request("GET", player_patches.SETTINGS_SCRIPT, headers={"Host": DEV_HOST})
+            resp = conn.getresponse()
+            body = resp.read()
+            return resp.status == 200 and b"const NATIVE_HEVC = true;" in body and b'"vmode"' in body
+        except (OSError, http.client.HTTPException):
+            return False
+        finally:
+            conn.close()
+
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -93,8 +109,18 @@ def make_handler(args):
         def proxy(self):
             path = self.path.split("?")[0]
             if path in LOCAL_FILES:
+                data = LOCAL_FILES[path].read_bytes()
+                if path == player_patches.SETTINGS_SCRIPT:
+                    patches = [("dev proxy: debug overlay always on", "const DEV_PROXY = false;",
+                                "const DEV_PROXY = true;", 1)]
+                    native = box_native_hevc()
+                    print(f"-> {path}: box native HEVC {'yes' if native else 'no'}", file=sys.stderr)
+                    if native:
+                        patches.append(("native codec selection", "const NATIVE_HEVC = false;",
+                                        "const NATIVE_HEVC = true;", 1))
+                    data = player_patches.apply(data.decode(), patches).encode()
                 return self.send_body(200, [("Content-Type", "application/javascript")],
-                                      LOCAL_FILES[path].read_bytes())
+                                      data)
 
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None

@@ -75,7 +75,15 @@ let lastShow = 0;
 let lastShownStamp = -1; // timestamp of the last frame drawn, to keep display order
 let pending = 0;
 
-const stats = {inFrames: 0, inBytes: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0, gaps: 0, keys: 0};
+const stats = {inFrames: 0, inBytes: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0, gaps: 0, keys: 0,
+  params: 0};
+// Video socket facts for the debug overlay, counted for every message (JPEG,
+// H.264, HEVC or text alike), since lastInput only moves for compressed video.
+const sockInfo = {openedAt: 0, opens: 0, msgs: 0, bytes: 0, lastClose: ""};
+// Any video data (JPEG or compressed, worker or page socket), for the overlay;
+// the decoder's own lastInput stays compressed-only for its pause/smooth logic.
+let lastData = 0;
+let lastJpeg = false;
 
 function sendLog(message) {
   self.postMessage(message);
@@ -466,8 +474,7 @@ function checkBacklog(now) {
   }
 }
 
-function decodeH264(data) {
-  const now = performance.now();
+function decodeH264(data, now) {
   stats.inFrames++;
   if (lastInput && now - lastInput > PAUSE_GAP) {
     self.postMessage({id: "wake", t: performance.timeOrigin + now});
@@ -482,6 +489,7 @@ function decodeH264(data) {
 
   const {key, gap, spsCodec} = inspect(data);
   if (key) stats.keys++;
+  if (spsCodec) stats.params++;
   if (spsCodec && spsCodec !== codec) openDecoder(spsCodec);
   // A reference picture never arrived: hold the last good picture until the
   // resync's fresh IDR instead of decoding smears.
@@ -520,8 +528,10 @@ function decodeH264(data) {
 
 function handleData(d) {
   stats.inBytes += d.length;
-  if (d.length >= 2 && d[0] === 0xff && d[1] === 0xd8) drawJPEG(d);
-  else decodeH264(d);
+  lastData = performance.now();
+  lastJpeg = d.length >= 2 && d[0] === 0xff && d[1] === 0xd8;
+  if (lastJpeg) drawJPEG(d);
+  else decodeH264(d, lastData);
 }
 
 // Video socket owned by the worker ("worker" socket mode, see zq-settings.js):
@@ -546,12 +556,21 @@ function openSocket(id, url) {
     return;
   }
   socket = ws;
+  sockInfo.openedAt = performance.now();
+  sockInfo.opens++;
+  sockInfo.msgs = sockInfo.bytes = 0;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     if (socket === ws) socketNote("open");
   };
   ws.onmessage = e => {
     if (socket !== ws) return;
+    sockInfo.msgs++;
+    if (typeof e.data === "string") {
+      sockInfo.bytes += e.data.length;
+      return;
+    }
+    sockInfo.bytes += e.data.byteLength;
     handleData(new Uint8Array(e.data));
     const now = performance.now();
     if (now - lastFrameNote >= RENDER_NOTE_INTERVAL) {
@@ -562,8 +581,9 @@ function openSocket(id, url) {
   ws.onerror = () => {
     if (socket === ws) socketNote("error");
   };
-  ws.onclose = () => {
+  ws.onclose = e => {
     if (socket !== ws) return;
+    sockInfo.lastClose = `${e.code}${e.reason ? ` ${e.reason}` : ""}`;
     socket = null;
     socketNote("close");
   };
@@ -600,6 +620,16 @@ setInterval(() => {
     resyncs: stats.resyncs,
     gaps: stats.gaps,
     keys: stats.keys,
+    waiting: waitingForKeyFrame,
+    inputAgeMs: lastData ? Math.round(performance.now() - lastData) : -1, // -1: nothing received yet
+    jpeg: lastJpeg,
+    sockState: socket ? socket.readyState : -1,
+    sockAgeMs: socket ? Math.round(performance.now() - sockInfo.openedAt) : -1,
+    sockOpens: sockInfo.opens,
+    sockMsgs: sockInfo.msgs,
+    sockBytes: sockInfo.bytes,
+    lastClose: sockInfo.lastClose,
+    params: stats.params,
     socket: !!socket,
     codec,
     size: canvas ? `${canvas.width}x${canvas.height}` : "",

@@ -13,17 +13,19 @@ Usage:
     python3 -I tools/build_patch.py                     # download + build
     python3 -I tools/build_patch.py --firmware path.zip # use a local copy
     python3 -I tools/build_patch.py --native-test       # + rollback machinery, receiver unchanged
+    python3 -I tools/build_patch.py --native-hevc       # experimental CarPlay HEVC + native rollback
     python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
-    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc5-ac)
-    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc5-diag)
-    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc5-ht40)
-    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 3.0-oc5-aes)
+    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc8-ac)
+    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc8-diag)
+    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc8-ht40)
+    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 3.0-oc8-aes)
 """
 
 import argparse
 import hashlib
 import io
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -44,7 +46,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "3.0-oc5"
+CUSTOM_VERSION = "3.0-oc8"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -99,13 +101,16 @@ NATIVE_TEST_FILES = ["usr/z-loader/lib/libScreenStream.so"]
 
 RESTORE_UPDATE_SH = """#!/bin/sh
 # Restore package: put back the stock native files saved by a native install.
-if [ -f /misc/zq-native/restore.sh ]; then
-  sh /misc/zq-native/restore.sh
+ROOT="${ZQ_ROOT:-}"
+ZQ="${ZQ_MISC:-/misc}/zq-native"
+if [ -f "$ZQ/restore.sh" ]; then
+  sh "$ZQ/restore.sh" || exit 1
 else
-  echo "$(date '+%Y-%m-%d %H:%M:%S') restore: no /misc/zq-native/restore.sh" \\
-    >> /usr/z-loader/zjinnova/web/zq-native.txt
+  echo "$(date '+%Y-%m-%d %H:%M:%S') restore: no $ZQ/restore.sh" \\
+    >> "$ROOT/usr/z-loader/zjinnova/web/zq-native.txt"
+  exit 1
 fi
-cp ./usr/z-loader/webversion /usr/z-loader/webversion
+cp ./usr/z-loader/webversion "$ROOT/usr/z-loader/webversion" || exit 1
 sync
 """
 
@@ -171,15 +176,26 @@ def main():
     native = ap.add_mutually_exclusive_group()
     native.add_argument("--native-test", action="store_true",
                         help="also install the native rollback machinery with unchanged receiver files")
+    native.add_argument("--native-hevc", action="store_true",
+                        help="experimental native CarPlay HEVC negotiation and compressed passthrough")
+    ap.add_argument("--native-video-diag", action="store_true",
+                    help="with --native-hevc, expose temporary native video checkpoints (adds -vdiag)")
+    ap.add_argument("--native-only", action="store_true",
+                    help="with --native-hevc/--native-test, preserve installed player and TLS/Wi-Fi files")
     native.add_argument("--restore-native", action="store_true",
                         help="build a package that only restores the stock native files")
     args = ap.parse_args()
+    if args.native_video_diag and not args.native_hevc:
+        ap.error("--native-video-diag requires --native-hevc")
+    if args.native_only and not (args.native_hevc or args.native_test):
+        ap.error("--native-only requires --native-hevc or --native-test")
     if args.wifi_bw40_test:
         args.wifi_diag = True  # the experiment reports through the diagnostics file
     if args.version is None:
         args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
                         + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
-                        + ("" if args.tls_chacha else "-aes"))
+                        + ("" if args.tls_chacha else "-aes")
+                        + ("-vdiag" if args.native_video_diag else ""))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -200,6 +216,11 @@ def main():
     }
     for dest, src in LOCAL_FILES.items():
         files[dest] = src.read_text(encoding="utf-8")
+        if args.native_hevc and src.name == "zq-settings.js":
+            files[dest] = player_patches.apply(files[dest], [
+                ("enable codec selection in native HEVC builds",
+                 "const NATIVE_HEVC = false;", "const NATIVE_HEVC = true;", 1),
+            ])
     scripts = {}  # boot scripts, installed executable
     for path, patches in wifi_patches.patches(ac=args.wifi_ac, diag=args.wifi_diag,
                                               bw40=args.wifi_bw40_test, ht40=args.wifi_ht40).items():
@@ -213,12 +234,28 @@ def main():
     entries = {dest: (content, 0o644) for dest, content in files.items()}
     entries.update({dest: (content, 0o755) for dest, content in scripts.items()})
 
-    if args.native_test:
+    if args.native_test or args.native_hevc:
         # Native files: patched z-link.sh (watchdog) plus receiver files as shipped.
         natives = {ZLINK_SH_PATH: (player_patches.apply(base.read(ZLINK_SH_PATH).decode(),
                                                         ZLINK_WATCHDOG_PATCHES), 0o755)}
-        for path in NATIVE_TEST_FILES:
-            natives[path] = (base.read(path), 0o755)
+        if args.native_hevc:
+            import json
+            import native_hevc
+            reports = []
+            build_dir = ROOT / "build"
+            build_dir.mkdir(exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="hevc-", dir=build_dir) as directory:
+                for name in native_hevc.PINNED:
+                    path = f"usr/z-loader/{'bin' if name == 'z-tesla' else 'lib'}/{name}"
+                    content, report = native_hevc.patch_native(
+                        name, base.read(path), Path(directory) / (name + ".build"),
+                        diagnostics=args.native_video_diag)
+                    natives[path] = (content, 0o755)
+                    reports.append(report)
+            entries[f"{NATIVE_META}/hevc-build.json"] = (json.dumps(reports, indent=2) + "\n", 0o644)
+        else:
+            for path in NATIVE_TEST_FILES:
+                natives[path] = (base.read(path), 0o755)
         listing = "".join(f"{hashlib.md5(base.read(p)).hexdigest()} {p}\n" for p in natives)
         entries.update(natives)
         entries[f"{NATIVE_META}/native.list"] = (listing, 0o644)
@@ -228,6 +265,11 @@ def main():
         # update.sh is the vendor's own installer (`cp ./* / -fr`); keep it executable.
         entries[UPDATE_SH_PATH] = (base.read(UPDATE_SH_PATH), 0o755)
 
+    if args.native_only:
+        allowed = set(natives) | {UPDATE_SH_PATH, WEBVERSION_PATH,
+                                  f"{NATIVE_META}/hevc-build.json",
+                                  f"{NATIVE_META}/native.list", f"{NATIVE_META}/restore.sh"}
+        entries = {path: value for path, value in entries.items() if path in allowed}
     write_zip(Path(args.out), args.version, entries)
 
 

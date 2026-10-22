@@ -20,7 +20,8 @@ BUNDLE_PATCHES = [
     ("max stream height (stock 720)", "at>720){var Wf=720*ae/at,$f=720",
      "at>__zq.maxh){var Wf=__zq.maxh*ae/at,$f=__zq.maxh", 1),
     ("frame rate (stock 30)", "fps:30", "fps:__zq.fps", 1),
-    ("H.264 mode (stock JPEG)", "var Mf=0;", "var Mf=__zq.h264?1:0;", 1),
+    # Video mode sent as is_h264_mode: 0 JPEG, 1 H.264, 2 HEVC (zq-settings.js vmode).
+    ("H.264 mode (stock JPEG)", "var Mf=0;", "var Mf=__zq.mode|0;", 1),
     ("mouse hover is not a touch drag (only send moves while the button is held)",
      "onMousemove:t[3]||(t[3]=l=>{e.handleMouseEvt(l,!0)})",
      "onMousemove:t[3]||(t[3]=l=>{l.buttons&1&&!__zq.rawTouch&&e.handleMouseEvt(l,!0)})", 1),

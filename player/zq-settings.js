@@ -10,7 +10,12 @@
   const PROJECT = "ownice-tesla-carplay";
   const PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay";
   const KEY = "zq.settings";
-  const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false, sock: "worker", touch: "raw"};
+  const NATIVE_HEVC = false; // set by the opt-in native package builder
+  const DEV_PROXY = false; // set by tools/dev_player.py: debug overlay always on
+  // vmode is the video mode sent to the box as is_h264_mode: 0 JPEG (local decode),
+  // 1 H.264 passthrough, 2 HEVC passthrough. The box treats any non-zero value as
+  // passthrough; the codec is decided by what the native receiver advertises (2 vs 1).
+  const DEFAULTS = {res: "auto", fps: 60, vmode: 1, smooth: false, sock: "worker", touch: "raw", debug: false};
   const AUTO_MAX_HEIGHT = 1200; // Model 3/Y screen height; S/X browser windows are smaller than 1300
   // Auto HD: the window size scaled up (by devicePixelRatio, at least 1.5x)
   // within DiPlay's ~3.7 MP budget for 50+ fps.
@@ -29,7 +34,11 @@
 
   function load() {
     try {
-      return {...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}")};
+      const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+      const value = saved && typeof saved === "object" ? saved : {};
+      const vmode = value.vmode === undefined && typeof value.h264 === "boolean"
+        ? (value.h264 ? 1 : 0) : (value.vmode ?? DEFAULTS.vmode);
+      return {...DEFAULTS, ...value, vmode};
     } catch (e) {
       return {...DEFAULTS};
     }
@@ -44,6 +53,36 @@
   }
 
   const settings = load();
+  // Reject malformed stored modes; HEVC needs the matching native package.
+  if (![0, 1, 2].includes(settings.vmode) || (!NATIVE_HEVC && settings.vmode === 2)) settings.vmode = 1;
+  delete settings.h264;
+  if (DEV_PROXY) settings.debug = true;
+
+  // Debug overlay only: read the control socket's session messages (the box's
+  // view of the phone session). One listener on that socket; video is untouched.
+  const ctrl = {state: null, phone: null, boxMode: null, at: 0};
+  if (settings.debug && window.WebSocket) {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class extends NativeWebSocket {
+      constructor(url, protocols) {
+        super(url, protocols);
+        if (!/:(9002|9112)(\/|\?|$)/.test(String(url))) return;
+        this.addEventListener("message", e => {
+          try {
+            const m = JSON.parse(e.data);
+            if (m.message_id === 11) {
+              ctrl.state = m.session_state;
+              ctrl.phone = m.phone_type;
+            }
+            if ("is_h264_mode" in m) ctrl.boxMode = m.is_h264_mode;
+            ctrl.at = performance.now();
+          } catch (err) {
+            // not a JSON control message
+          }
+        });
+      }
+    };
+  }
   const hd = settings.res === "hd";
   const target = settings.res === "auto" || hd ? 0 : parseInt(settings.res, 10);
 
@@ -218,7 +257,9 @@
     },
     maxh: target || (hd ? HD_MAX_HEIGHT : AUTO_MAX_HEIGHT),
     fps: settings.fps,
-    h264: settings.h264,
+    mode: settings.vmode,
+    h264: settings.vmode > 0, // compat: any non-zero mode is compressed passthrough
+
     smooth: settings.smooth,
     rawTouch,
     touchStats,
@@ -254,6 +295,9 @@
     #zq-panel .info{margin-top:12px;font-size:12px;color:#999;line-height:1.5;overflow-wrap:anywhere}
     #zq-panel .probe{margin-top:12px;font-size:12px;color:#555;line-height:1.5}
     #zq-panel .probe:empty{display:none}
+    /* Debug overlay over the CarPlay picture: text only, never takes a touch */
+    #zq-debug{position:fixed;top:8px;right:8px;z-index:99998;pointer-events:none;padding:6px 8px;
+      border-radius:8px;background:#000a;color:#0f0;font:12px/1.35 ui-monospace,monospace;white-space:pre}
   `;
 
   // Box AP radio settings from the read-only CGIs the vendor settings page uses.
@@ -296,6 +340,43 @@
     const ch = parseInt(wifi.channel, 10);
     const band = ch > 14 ? "5 GHz" : ch > 0 ? "2.4 GHz" : "";
     return [`Wi-Fi ch ${wifi.channel}`, band, wifi.mode, wifi.country].filter(Boolean).join(" · ");
+  }
+
+  // Name the live stream codec for the stats readout, rather than assuming H.264.
+  function codecName(codec) {
+    if (/^(hvc1|hev1)\./.test(codec || "")) return "HEVC";
+    if (/^avc1\./.test(codec || "")) return "H.264";
+    return "";
+  }
+
+  // Debug overlay text: what the stream is, whether data arrives and whether the
+  // decoder has a key frame to start from (the facts a black screen hinges on).
+  function debugText() {
+    const s = window.__zq.stats;
+    const ago = ms => ms == null ? "?" : ms < 0 ? "never" : `${(ms / 1000).toFixed(1)} s ago`;
+    // Raw control-message fields; their vendor meaning is not established.
+    const box = `session_state ${ctrl.state ?? "?"} · phone ${ctrl.phone ?? "?"} · box mode ${ctrl.boxMode ?? "?"}` +
+      ` · ctrl msg ${ago(ctrl.at ? Math.round(performance.now() - ctrl.at) : -1)}`;
+    if (!s) return `zq debug: no worker stats yet\n${box}`;
+    const open = s.sockAgeMs == null || s.sockAgeMs < 0 ? "" : ` ${Math.round(s.sockAgeMs / 1000)} s`;
+    const kb = s.sockBytes == null ? "?" : Math.round(s.sockBytes / 1024);
+    // In page socket mode the worker never sees the socket, so its counters stay 0.
+    const sockLine = settings.sock !== "worker" ? "video socket page (counters need Worker mode)"
+      : `video socket ${["connecting", "open", "closing", "closed"][s.sockState] || "none"}${open}` +
+        ` · opens ${s.sockOpens ?? "?"} · msgs ${s.sockMsgs ?? "?"} · ${kb} KB` +
+        (s.lastClose ? ` · last close ${s.lastClose}` : "");
+    // JPEG frames bypass the decoder: no codec string and no key frames to wait for.
+    const codec = s.jpeg ? "JPEG" : `${codecName(s.codec) || "none"} ${s.codec || ""}`;
+    const key = s.jpeg ? "keyframe n/a (JPEG)" : `keyframe ${s.waiting ? "WAITING" : "ok"}`;
+    return [
+      `codec ${codec} ${s.size || ""}`,
+      `fps ${s.fps} shown / ${s.inFps} in · ${(s.inKbps / 1000).toFixed(1)} Mbps · decode ${s.decodeMs} ms · queue ${s.queue}`,
+      `${key} · video input ${ago(s.inputAgeMs)} · params ${s.params ?? "?"} · keys ${s.keys}`,
+      sockLine,
+      box,
+      `resyncs ${s.resyncs} · gaps ${s.gaps || 0}${s.smooth ? ` · delay ${s.delayMs} ms` : ""}` +
+        ` · mode ${["JPEG", "H.264", "HEVC"][settings.vmode]}`,
+    ].join("\n");
   }
 
   function group(title, key, options, draft, render) {
@@ -381,14 +462,26 @@
 
     const draft = {...settings};
     let probe = null; // decoder check result lines, kept across re-renders
+    let codecError = "";
+    function refreshCodecStatus() {
+      if (!NATIVE_HEVC) return;
+      fetch("/zq-codec.txt", {cache: "no-store"})
+        .then(response => response.ok ? response.text() : "")
+        .then(text => { codecError = text.trim(); updateInfo(); })
+        .catch(() => {});
+    }
     function render() {
       panel.replaceChildren(
         ...group("Resolution", "res", RESOLUTIONS, draft, render),
         ...group("Frame rate", "fps", [[30, "30"], [60, "60"]], draft, render),
-        ...group("Video", "h264", [[true, "H.264 (HD)"], [false, "JPEG (compatible)"]], draft, render),
+        ...group("Video", "vmode", NATIVE_HEVC
+          ? [[2, "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]
+          : [[1, "H.264 (HD)"], [0, "JPEG (compatible)"]], draft, render),
         ...group("Playback", "smooth", [[false, "Low latency"], [true, "Smooth"]], draft, render),
         ...group("Video socket", "sock", [["worker", "Worker (fast)"], ["page", "Page (stock)"]], draft, render),
         ...group("Touch", "touch", [["raw", "Raw (fast)"], ["stock", "Stock"]], draft, render),
+        // The dev proxy forces the overlay on, so the switch would do nothing there.
+        ...(DEV_PROXY ? [] : group("Debug overlay", "debug", [[false, "Off"], [true, "On"]], draft, render)),
       );
       const apply = document.createElement("button");
       apply.className = "apply";
@@ -412,19 +505,26 @@
       probeInfo.className = "probe";
       if (probe) probeInfo.replaceChildren(...probe.flatMap((l, i) => (i ? [document.createElement("br"), l] : [l])));
       const info = document.createElement("div");
-      info.className = "info";
-      panel.append(apply, check, probeInfo, info);
+      info.className = "info stream-info";
+      const codecHelp = document.createElement("div");
+      codecHelp.className = "info";
+      codecHelp.textContent = NATIVE_HEVC
+        ? "Reboot the adapter after installing or restoring native files. To change codec: disconnect the phone, apply, then reconnect it. The current stream keeps its negotiated codec until reconnecting."
+        : "HEVC selection requires the native codec-switch package. Stream stats show the codec currently received.";
+      panel.append(codecHelp, apply, check, probeInfo, info);
       updateInfo();
     }
 
     function updateInfo() {
-      const info = panel.querySelector(".info");
+      const info = panel.querySelector(".stream-info");
       if (!info) return;
       const s = window.__zq.stats;
       const lines = [`Window ${document.documentElement.clientWidth}×${document.documentElement.clientHeight}` +
         ` @${window.devicePixelRatio || 1}x`, wifiLine(), touchLine(), wakeLine()];
+      if (codecError) lines.push(codecError);
       if (s && s.codec) {
-        lines.push(`Stream ${s.size} ${s.codec}`);
+        const name = codecName(s.codec);
+        lines.push(`Stream ${s.size} ${name ? `${name} · ` : ""}${s.codec}`);
         lines.push(`${s.fps} fps shown / ${s.inFps} in · decode ${s.decodeMs} ms · queue ${s.queue}`);
         // Bits per pixel per frame: the phone's bitrate spread over the stream size.
         // Lower means blockier motion; compare resolutions with the same screen moving.
@@ -439,8 +539,16 @@
       lines.push(PROJECT_URL);
       info.replaceChildren(...lines.flatMap((l, i) => (i ? [document.createElement("br"), l] : [l])));
     }
+    // Optional overlay on the CarPlay picture. Text changes once per second, so it
+    // costs one small repaint per second; the video itself is drawn in the worker.
+    const overlay = settings.debug ? document.createElement("div") : null;
+    if (overlay) {
+      overlay.id = "zq-debug";
+      document.body.append(overlay);
+    }
     setInterval(() => {
       if (panel.classList.contains("open")) updateInfo();
+      if (overlay) overlay.textContent = debugText();
     }, 1000);
 
     // Keep taps on our controls away from the CarPlay touch handlers.
@@ -465,7 +573,10 @@
         panel.style.maxHeight = `${Math.max(120, window.innerHeight - top - 8)}px`;
       }
       panel.classList.toggle("open", open);
-      if (open) refreshWifi(updateInfo);
+      if (open) {
+        refreshWifi(updateInfo);
+        refreshCodecStatus();
+      }
     };
     document.body.append(panel); // the button lives in the vendor toolbar (see sync)
 

@@ -12,6 +12,13 @@ statically linked program that does not load any receiver library, so a broken r
 does not block the next upload. The box's Wi-Fi AP is started at boot by
 `etc/wlan-softap.sh`, independently of the receiver.
 
+Native install and restore now log **REBOOT REQUIRED**. Reboot explicitly after
+either operation, before relying on the installed generation: `z-tesla` and
+`z-link` have independent supervisors, and a running shell does not reload a
+changed `z-link.sh`. Packages do not initiate a reboot or partial live restart.
+The crash watchdog can put stock files back on disk, but full activation still
+requires that reboot.
+
 ## Three layers
 
 | Layer | Trigger | Action |
@@ -24,7 +31,9 @@ does not block the next upload. The box's Wi-Fi AP is started at boot by
 
 1. On the first native install it checks every listed file against the stock MD5 from
    `native.list` and copies it to `/misc/zq-native/stock/`. If any file is not stock it
-   aborts before changing anything. Later installs keep that original backup.
+   aborts before changing anything. Later installs keep that original backup and
+   verify/extend it before touching additional native files (for example, moving
+   from `--native-test` to `--native-hevc`). A missing `md5sum` aborts the install.
 2. It installs `restore.sh` before any native file changes.
 3. Native files are swapped with copy + rename, so the running receiver keeps its old
    mapping instead of reading a half-written library. Any failure from here on runs
@@ -33,7 +42,9 @@ does not block the next upload. The box's Wi-Fi AP is started at boot by
    browser at `https://www.zbox.link/zq-native.txt` (the box has no shell).
 
 `restore.sh` skips files already identical to the backup and clears
-`/misc/zq-native/active` only when every file is stock again.
+`/misc/zq-native/active` only when every file is stock again. Since 3.0-oc7,
+successful restore also removes `/data/local/tmp/zq_hevc` (the codec-selection flag)
+and the codec diagnostic `/zq-codec.txt`.
 
 ## Validation status
 
@@ -43,6 +54,13 @@ does not block the next upload. The box's Wi-Fi AP is started at boot by
   but have not yet run under BusyBox.
 - Not yet run on a box. First on-device step: `build_patch.py --native-test` ships the
   rollback machinery with receiver files unchanged, then `--restore-native`.
+- Seven additional reproducible package tests (`tools/test_native_packages.py`)
+  cover HEVC install/restore, backup expansion, changed native files, corrupted
+  backups, reinstall and package contents, including removal of the codec flag. The restore package now propagates restore errors.
 - Limits: the watchdog sees only crashes. A receiver that hangs or that the iPhone
   rejects needs the restore package. A change that broke boot, the kernel or Wi-Fi
   would need FEL recovery; native packages here change none of those.
+
+Since 3.0-oc8, the HEVC package also backs up and replaces `libzlink-main.so`
+for reconnect keyframe requests. Backup expansion and native restore cover
+all five affected native files. See [HEVC_RECONNECT_FIX.md](HEVC_RECONNECT_FIX.md).

@@ -36,6 +36,10 @@ done < "$ZQ/stock/native.list"
 sync
 
 if [ "$failed" = 0 ]; then
+  rm -f "$ROOT/data/local/tmp/zq_hevc" "$ROOT/usr/z-loader/zjinnova/web/zq-codec.txt"
+  for checkpoint in request phone sender output; do
+    rm -f "$ROOT/usr/z-loader/zjinnova/web/zq-video-$checkpoint.txt"
+  done
   rm -f "$ZQ/active"
   sync
   log "stock native files restored"
@@ -43,5 +47,5 @@ else
   log "restore incomplete; use tools/flash.sh rollback"
 fi
 
-[ -z "$ROOT" ] && killall z-link 2>/dev/null
+log "REBOOT REQUIRED: reboot the adapter to activate all restored native files"
 exit "$failed"
