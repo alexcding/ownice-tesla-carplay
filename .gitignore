@@ -1,0 +1,7 @@
+build/
+firmware/
+*.zip
+*.key
+*.crt
+.DS_Store
+__pycache__/
