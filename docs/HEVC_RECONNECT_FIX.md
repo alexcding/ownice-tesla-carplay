@@ -1,9 +1,9 @@
 # HEVC black after browser refresh
 
-**Latest status, 2026-10-22:** the installed `3.0-oc8-vdiag-focus2` candidate
-retains native focus on compressed socket close. A separate browser cleanup
-release was subsequently captured and suppressed for compressed modes in
-`tools/player_patches.py`. That latest fix is running in the Mac proxy only.
+**Latest status, 2026-10-22:** complete `3.0-oc8-hevc-preview.1` is installed,
+including native compressed-focus retention and the separate browser cleanup
+fix in `tools/player_patches.py`. Install completion and served browser files
+are verified; an explicit reboot and post-install playback check remain pending.
 A fresh-session HEVC refresh passed; the already-black session required a phone
 reconnect, and extended idle/return remains pending. See the
 [diagnostic record](HEVC_VIDEO_DIAGNOSTICS.md) for chronology and corrected

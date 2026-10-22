@@ -2,8 +2,10 @@
 
 Codec switch implemented in `3.0-oc7`; current package is `3.0-oc8`, adding
 [refresh keyframe requests](HEVC_RECONNECT_FIX.md). The codec-switch/native diagnostic
-candidate `3.0-oc8-vdiag-focus2` is installed on the owner's adapter. The latest browser
-cleanup fix remains proxy-only; see [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md). Native installation and restore
+candidate is now the complete `3.0-oc8-hevc-preview.1` package on the owner's adapter,
+including browser cleanup and rollback validation fixes. Install completion is
+verified, with explicit reboot and post-install playback pending; see
+[diagnostics](HEVC_VIDEO_DIAGNOSTICS.md). Native installation and restore
 require an explicit owner-triggered reboot before use. The earlier `3.0-oc6` native
 package advertises HEVC unconditionally and does not implement this switch.
 This targets only Ownice T3 firmware 2.9.11 / build 202402031913 and the four

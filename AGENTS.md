@@ -1,9 +1,10 @@
 # AGENTS.md
 
-Current HEVC status: native `3.0-oc8-vdiag-focus2` is installed on the owner's T3;
-HEVC playback and controlled refresh are verified in Mac Chrome only. The latest
-compressed-video cleanup fix is served by the dev proxy, not yet flashed. Extended
-idle/return, actual Tesla playback and hardware recovery remain unvalidated. See
+Current HEVC status: full `3.0-oc8-hevc-preview.1` is installed on the owner's T3,
+including browser cleanup and rollback checks. Install completed; its required
+explicit reboot has not been performed. Previous HEVC playback/refresh validation
+was in Mac Chrome only; post-install playback, extended idle/return, actual Tesla
+playback and hardware recovery remain unvalidated. See
 [the diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
 Current stock-to-package build/install commands are in [README.md](README.md).
 A complete HEVC build includes browser files; use `--native-only` only when

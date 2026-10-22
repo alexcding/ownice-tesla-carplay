@@ -10,10 +10,11 @@ An opt-in native package adds CarPlay HEVC negotiation, compressed passthrough a
 JPEG/H.264/HEVC setting. HEVC playback is verified on the owner's T3 in **Mac Chrome**;
 Tesla-browser playback and broader hardware compatibility remain untested.
 
-Current default build version: **3.0-oc8**. The adapter runs native diagnostics/focus
-candidate **3.0-oc8-vdiag-focus2**. The latest browser cleanup fix is tested through the
-Mac development proxy and has not been flashed. A fresh-session refresh passed;
-extended idle/background-return reliability remains under validation. See the
+Current default build version: **3.0-oc8**. The complete experimental package
+**3.0-oc8-hevc-preview.1** is now installed on the owner's adapter, including the
+browser cleanup and rollback validation fixes. Its install log requires an explicit
+reboot, not yet performed. A fresh-session refresh passed previously through the
+Mac proxy; post-install playback and extended idle/return remain under validation. See the
 [diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md) for the exact evidence.
 
 See the [firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) for Wi-Fi, CarPlay,

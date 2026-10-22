@@ -1,10 +1,11 @@
 # HEVC refresh delivery diagnostics
 
-Current status: native `3.0-oc8-vdiag-focus2` is installed with owner authorization.
-HEVC playback and controlled refresh are verified on the owner's T3 in Mac Chrome.
-A separate browser cleanup focus-release fix is now running through the dev proxy
-and passed one fresh-session refresh; it has not been flashed. Extended idle/return,
-Tesla playback and live restore/watchdog recovery remain unvalidated. The record
+Current status: complete `3.0-oc8-hevc-preview.1` is installed with owner authorization,
+including the browser cleanup and rollback validation fixes. The version, install
+log and served browser-file bytes are verified; the required explicit reboot has
+not been performed. Prior HEVC playback/refresh checks passed in Mac Chrome.
+Post-install playback, extended idle/return, Tesla playback and live restore/watchdog
+recovery remain unvalidated. The record
 below is chronological; later control-message captures correct earlier activation
 inferences.
 
@@ -473,3 +474,24 @@ of both manifests, duplicate rows, missing or invalid installed metadata, a
 smaller installed generation and staged first-install recovery. The unpublished
 preview ZIPs were rebuilt; no native codec/focus payload changed. Nothing was
 published, flashed or rebooted.
+
+#### Owner-authorized full preview installation
+
+At the owner's explicit request, uploaded the rebuilt complete
+`build/releases/3.0-oc8-hevc-preview.1/update_tesla_hevc_3.0-oc8-hevc-preview.1.zip`
+(2,090,073 bytes; MD5 `10a477f1dbd96bb4c4af6cab4a1bdfb6`; SHA-256
+`113d7c824dea51fa84daa160b9e69b9c901daccc33134e5b5fb0c5884e298bfb`).
+The source fixes are committed through `70be977`. The prior device version was
+`3.0-oc8-vdiag-focus2`; upload returned code 0 / success, version polling reported
+`3.0-oc8-hevc-preview.1`, and `/zq-native.txt` logged installation with
+`REBOOT REQUIRED`. Read-only HTTPS checks confirmed byte-identical settings,
+worker and player bundle versus the uploaded ZIP. These establish installation
+and served-file contents, not fresh playback or a completed reboot.
+
+Matching restore ZIP:
+`build/releases/3.0-oc8-hevc-preview.1/restore_native_3.0-oc8-hevc-preview.1.zip`,
+SHA-256 `05d88d6df62af10185f14162e5797aa7c9179e98d7cc47357149861feb2a6cca`.
+It uses the saved stock backups and the new completeness/checksum validator.
+Full stock reinstall remains available through `tools/flash.sh rollback`. Either
+rollback is a separate authorized device action; native restoration requires
+an explicit reboot afterward. No adapter reboot or GitHub release was performed.

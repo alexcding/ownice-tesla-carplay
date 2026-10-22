@@ -1,9 +1,11 @@
 # Device reference
 
 **Current device status, 2026-10-22:** the owner's adapter reports
-`3.0-oc8-vdiag-focus2`. HEVC 1328x658 playback and controlled refresh are verified
-in Mac Chrome. The latest browser cleanup fix is on the development proxy only;
-long idle/return, Tesla playback and live restore/watchdog recovery remain pending.
+`3.0-oc8-hevc-preview.1`. The full update includes browser cleanup and rollback
+validation fixes; served browser files match the package. Its explicit reboot and
+post-install playback check remain pending. Previous HEVC 1328x658 playback and
+refresh checks passed in Mac Chrome; long idle/return, Tesla playback and live
+restore/watchdog recovery remain pending.
 See [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md) for package identities and observations.
 Historical version entries below describe earlier installations.
 

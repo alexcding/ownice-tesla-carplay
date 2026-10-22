@@ -1,9 +1,10 @@
 # Existing T3 CarPlay receiver: HEVC modification targets
 
 **Current status, 2026-10-22:** native HEVC playback is verified on the owner's
-stock-2.9.11-derived T3 in Mac Chrome. The installed native diagnostic candidate is
-`3.0-oc8-vdiag-focus2`; the newer browser cleanup focus fix is proxy-only. Fresh-session
-refresh passed, while extended idle/return and Tesla playback remain untested.
+stock-2.9.11-derived T3 in Mac Chrome. Complete `3.0-oc8-hevc-preview.1` is now
+installed, including browser cleanup and rollback validation fixes. Its explicit
+reboot and post-install playback check remain pending. Fresh-session refresh
+passed previously via the proxy; extended idle/return and Tesla playback are untested.
 The inspection and early install records below are historical; use the
 [README](../README.md) for current build/install commands and
 [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md) for the latest device evidence.
