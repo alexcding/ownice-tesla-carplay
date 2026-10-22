@@ -70,6 +70,7 @@ require those operations, explain the dependency and look for an approach within
 | `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc4`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
+| `tools/tls_patches.py` | opt-in (`build_patch.py --tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |
 | `tools/test_wifi_patches.py` | runs the `--wifi-ac` scripts against mocked commands: `python3 -I tools/test_wifi_patches.py --firmware <zip>` |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing (`--firmware <zip>` when the box already runs our build) |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
@@ -126,6 +127,14 @@ label or receiver version does not establish compatibility or HEVC support.
   smear. The web control protocol has no key-frame request; `libAirPlay.so` has
   `AirPlayReceiverSessionForceKeyFrame` (LIVI sends `forceKeyFrame`; node-carplay sends Carlinkit `frame` every
   5 s), so a native z-tesla change could replace the restart. A focus request while focused gives no IDR.
+- Player sockets (z-tesla, `:5002` etc.) negotiate TLS 1.3 **AES-256-GCM** with stock settings; the T113 (Cortex-A7)
+  has no AES instructions. Plain `ws://` is not an option: WebCodecs needs an HTTPS page and Chrome blocks `ws://`
+  from HTTPS. `--tls-chacha` (version suffix `-tls`) makes z-tesla prefer ChaCha20. Flashed on BOX_1189B as
+  `3.0-oc4-ht40-tls`: after a power cycle ports 5002/9002/7002 negotiate `TLS_CHACHA20_POLY1305_SHA256` against an
+  AES-first client, Mac Chrome streams 51–61 fps with 0 frame gaps, and the owner reports the player as "a lot
+  faster" (subjective; no before/after Touch→frame numbers yet). Only z-tesla gets the config; uploads/rollback (z-connman, Go TLS) are unaffected. Needs a
+  power cycle. A later build without the flag leaves the changed `z-tesla-sh.sh` in place: `flash.sh rollback`
+  (stock zip) restores it.
 - Touch→frame (touch-down to the first frame after a still screen, Video panel): ~157 ms median, 70–313 ms over
   11 taps on Mac Chrome via the dev proxy. Decode is ~2 ms, so the lag is the phone/box round trip.
 - Video socket defaults to **Worker**: `__zq.videoSocket` gives the bundle a WebSocket stand-in, `worker.js` owns

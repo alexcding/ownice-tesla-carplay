@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import player_patches  # noqa: E402
+import tls_patches  # noqa: E402
 import wifi_patches  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,7 +100,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
     ap.add_argument("--version",
-                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option); "
+                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option, '-tls' for --tls-chacha); "
                          "keep a non-vendor suffix")
     ap.add_argument("--wifi-ac", action="store_true",
                     help="also patch the soft-AP boot scripts for 802.11ac 80 MHz")
@@ -109,13 +110,16 @@ def main():
                     help="run the soft AP at 40 MHz (re-requested from the driver after start-up, with fallback)")
     ap.add_argument("--wifi-bw40-test", action="store_true",
                     help="one-time experiment: ask the AP driver for 40 MHz at runtime (implies --wifi-diag)")
+    ap.add_argument("--tls-chacha", action="store_true",
+                    help="z-tesla's player sockets prefer ChaCha20 over AES-GCM (cheaper on the T113)")
     ap.add_argument("--out", default="build/update_tesla.zip")
     args = ap.parse_args()
     if args.wifi_bw40_test:
         args.wifi_diag = True  # the experiment reports through the diagnostics file
     if args.version is None:
         args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
-                        + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else ""))
+                        + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
+                        + ("-tls" if args.tls_chacha else ""))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -133,6 +137,10 @@ def main():
     for path, patches in wifi_patches.patches(ac=args.wifi_ac, diag=args.wifi_diag,
                                               bw40=args.wifi_bw40_test, ht40=args.wifi_ht40).items():
         scripts[path] = player_patches.apply(base.read(path).decode(), patches)
+    if args.tls_chacha:
+        files[tls_patches.CONF_PATH] = tls_patches.CONF
+        for path, patches in tls_patches.SCRIPT_PATCHES.items():
+            scripts[path] = player_patches.apply(base.read(path).decode(), patches)
 
     def entry(name, mode):
         info = zipfile.ZipInfo(name)
