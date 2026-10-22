@@ -43,7 +43,12 @@ requires that reboot.
 
 Before replacing any live file, `restore.sh` requires a readable, nonempty manifest
 with valid checksum/path entries and verifies every listed backup against its
-recorded stock MD5. Missing manifests, empty/invalid entries, missing backups,
+recorded stock MD5. The saved list must cover every installed native entry and
+every file in the backup inventory; duplicate entries are rejected. Installation
+metadata is taken from the live metadata directory, or from the staged package
+when a first installation has not yet finished. Backups retained from older,
+larger generations remain covered even if the current package is smaller.
+Missing manifests, empty/invalid entries, missing backups,
 checksum failures or a missing `md5sum` abort before replacement. The active
 recovery marker, codec flag and diagnostics remain intact on these failures.
 The restore ZIP includes and runs its own validator, so this protection applies
@@ -65,7 +70,7 @@ and the codec diagnostic `/zq-codec.txt`. Current restore also clears the four
 - Native HEVC installation and stock-backup creation have run on the owner's box.
   Live restore and crash-watchdog recovery have not been demonstrated. A separate
   `--native-test` / `--restore-native` device exercise remains a useful recovery check.
-- Twelve reproducible package tests (`tools/test_native_packages.py`)
+- Eighteen reproducible package tests (`tools/test_native_packages.py`)
   cover HEVC install/restore, backup expansion, changed native files, corrupted
   backups, reinstall and package contents, including removal of the codec flag.
   Restore regressions cover missing/empty/malformed manifests, missing/corrupt

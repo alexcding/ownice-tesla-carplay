@@ -118,7 +118,8 @@ tools/flash.sh update build/restore_native.zip
 
 The restore uses stock backups saved by the native installer and requires a subsequent
 explicit reboot. It restores the five native files and clears codec/diagnostic state;
-its bundled validator checks all listed backup checksums before replacing any file.
+its bundled validator checks backup checksums and manifest completeness against
+installation metadata and saved files before replacing any file.
 An invalid manifest or backup aborts restoration and preserves recovery state.
 The custom browser/TLS files remain. The crash watchdog handles repeated receiver exits,
 not a running receiver with a black screen. Hardware watchdog/restore recovery still needs

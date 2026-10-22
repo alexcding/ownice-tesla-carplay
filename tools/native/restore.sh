@@ -28,6 +28,8 @@ LIST="$ZQ/stock/native.list"
 [ -f "$LIST" ] && [ -r "$LIST" ] && [ -s "$LIST" ] || abort "missing or empty backup manifest"
 command -v md5sum >/dev/null 2>&1 || abort "md5sum missing"
 count=0
+paths=" "
+records=" "
 while read -r sum path extra || [ -n "$sum$path$extra" ]; do
   [ -n "$sum$path$extra" ] || continue
   [ -z "$extra" ] && [ "${#sum}" -eq 32 ] || abort "invalid backup manifest entry"
@@ -37,13 +39,54 @@ while read -r sum path extra || [ -n "$sum$path$extra" ]; do
     *) abort "invalid backup path" ;;
   esac
   case "/$path/" in */../*|*/./*|*//*) abort "invalid backup path" ;; esac
+  case "$paths" in *" $path "*) abort "duplicate backup manifest path" ;; esac
   [ -f "$ZQ/stock/$path" ] || abort "missing backup of $path"
   got="$(md5sum "$ZQ/stock/$path")" || abort "could not checksum backup of $path"
   got="${got%% *}"
   [ "$got" = "$sum" ] || abort "backup checksum mismatch for $path"
+  paths="$paths$path "
+  records="$records$sum:$path "
   count=$((count + 1))
 done < "$LIST"
 [ "$count" -gt 0 ] || abort "empty backup manifest"
+
+# The saved list is a union across native generations. Every current installed
+# entry must be covered, but a smaller later generation must not discard older
+# backups. During a first install failure, metadata may still be in staging.
+INSTALLED="$ZQ/native.list"
+if [ ! -e "$INSTALLED" ]; then INSTALLED="misc/zq-native/native.list"; fi
+[ -f "$INSTALLED" ] && [ -r "$INSTALLED" ] && [ -s "$INSTALLED" ] ||
+  abort "missing or empty installed native manifest"
+installed_count=0
+while read -r sum path extra || [ -n "$sum$path$extra" ]; do
+  [ -n "$sum$path$extra" ] || continue
+  [ -z "$extra" ] || abort "invalid installed native manifest entry"
+  case "$records" in
+    *" $sum:$path "*) ;;
+    *) abort "backup manifest does not cover installed native entry $path" ;;
+  esac
+  installed_count=$((installed_count + 1))
+done < "$INSTALLED"
+[ "$installed_count" -gt 0 ] || abort "empty installed native manifest"
+
+# Inventory catches omissions even if the installed manifest is also truncated
+# or represents a smaller generation. No external find/grep utility is needed.
+check_inventory() {
+  for saved_file in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$saved_file" ] || [ -L "$saved_file" ] || continue
+    [ ! -L "$saved_file" ] || abort "unexpected symlink in native backup"
+    if [ -d "$saved_file" ]; then
+      check_inventory "$saved_file"
+    else
+      inventory_path="${saved_file#"$ZQ/stock/"}"
+      case "$paths" in
+        *" $inventory_path "*) ;;
+        *) abort "backup manifest omits saved native file $inventory_path" ;;
+      esac
+    fi
+  done
+}
+check_inventory "$ZQ/stock/usr/z-loader"
 
 failed=0
 while read -r sum path || [ -n "$sum$path" ]; do

@@ -455,3 +455,21 @@ no native codec or focus code changed in this rollback fix. Both release ZIPs
 pass integrity/path/version checks, include the updated validator and contain no
 private-key/certificate files. Checksums were regenerated under ignored
 `build/releases/3.0-oc8-hevc-preview.1/`. Nothing was released, flashed or rebooted.
+
+#### Follow-up review: truncated backup manifests
+
+A second local review reproduced partial restoration when the backup manifest was
+truncated after a complete valid row. The helper returned success and cleared the
+active marker while leaving another native file patched. The preflight now also
+requires exact checksum/path coverage of the installed native metadata and path
+coverage of the saved-file inventory, and rejects duplicate backup paths. It uses
+staged metadata only when installed metadata is absent, allowing recovery during
+a first installation failure. A smaller current package can still restore the
+complete backup union from earlier generations.
+
+The new missing-row/backup regression failed against the previous ZIP before
+the fix. Updated package tests also cover every omitted row, matching truncation
+of both manifests, duplicate rows, missing or invalid installed metadata, a
+smaller installed generation and staged first-install recovery. The unpublished
+preview ZIPs were rebuilt; no native codec/focus payload changed. Nothing was
+published, flashed or rebooted.

@@ -253,6 +253,72 @@ class PackageTests(unittest.TestCase):
         self.install(BUILD / f"restore_native_{PACKAGE_VERSION}.zip", "restore-no-newline")
         self.assert_stock()
 
+    def test_restore_rejects_truncated_and_duplicate_manifest_entries(self):
+        self.install(self.hevc)
+        manifest = self.misc / "zq-native/stock/native.list"
+        cases = [(f"omitted-{index}", self.listing[:index] + self.listing[index + 1:])
+                 for index in range(len(self.listing))]
+        cases.append(("duplicate", self.listing[:-1] + [self.listing[0]]))
+        for name, lines in cases:
+            with self.subTest(name=name):
+                manifest.write_text("\n".join(lines) + "\n")
+                self.assert_restore_refuses_without_changes("restore-" + name)
+
+    def test_restore_detects_file_omitted_from_backup_and_manifest(self):
+        self.install(self.hevc)
+        manifest = self.misc / "zq-native/stock/native.list"
+        for index in [0, -1]:
+            path = self.listing[index].split()[1]
+            backup = self.misc / "zq-native/stock" / path
+            original = backup.read_bytes()
+            with self.subTest(path=path):
+                manifest.write_text("".join(line + "\n" for line in self.listing
+                                            if line.split()[1] != path))
+                backup.unlink()
+                try:
+                    self.assert_restore_refuses_without_changes(f"restore-missing-both-{index}")
+                finally:
+                    backup.write_bytes(original)
+
+    def test_restore_inventory_catches_matching_truncated_manifests(self):
+        self.install(self.hevc)
+        # Neither list alone reveals this missing row; its saved file does.
+        truncated = "\n".join(self.listing[:-1]) + "\n"
+        for path in ["zq-native/native.list", "zq-native/stock/native.list"]:
+            (self.misc / path).write_text(truncated)
+        self.assert_restore_refuses_without_changes("restore-both-manifests-truncated")
+
+    def test_restore_rejects_missing_or_invalid_install_metadata(self):
+        self.install(self.hevc)
+        metadata = self.misc / "zq-native/native.list"
+        for name, contents in [("missing", None), ("empty", ""),
+                               ("checksum", "0" * 32 + " " + self.listing[0].split()[1] + "\n")]:
+            with self.subTest(name=name):
+                if contents is None:
+                    metadata.unlink()
+                else:
+                    metadata.write_text(contents)
+                self.assert_restore_refuses_without_changes("restore-metadata-" + name)
+
+    def test_restore_covers_backup_union_after_installing_smaller_generation(self):
+        self.install(self.hevc)
+        self.install(self.native, "smaller-generation")
+        metadata = self.misc / "zq-native/native.list"
+        self.assertEqual(len(metadata.read_text().splitlines()), 2)
+        self.install(BUILD / f"restore_native_{PACKAGE_VERSION}.zip", "restore-union")
+        self.assert_stock()
+
+    def test_restore_uses_staged_metadata_before_first_install_finishes(self):
+        self.install(self.hevc)
+        (self.misc / "zq-native/native.list").unlink()
+        staged = Path(self.temp.name) / "staged-generation"
+        with zipfile.ZipFile(self.hevc) as z:
+            z.extractall(staged)
+        result = subprocess.run(["sh", "misc/zq-native/restore.sh"], cwd=staged,
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_stock()
+
     def test_package_limits_and_compressed_video_setting(self):
         with zipfile.ZipFile(self.hevc) as z:
             names = set(z.namelist())
