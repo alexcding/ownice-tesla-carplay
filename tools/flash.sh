@@ -30,28 +30,45 @@ version() {
   CURL -m 5 "http://$BOX/cgi-bin/checkver.cgi?t=$(date +%s)" 2>/dev/null || echo '(no response)'
 }
 
+# Wait until the box reboots and reports the expected version (or time out).
 wait_for_box() {
-  echo "waiting for the box to reboot..."
-  CURL --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused -m 5 \
-    "http://$BOX/cgi-bin/checkver.cgi?t=$(date +%s)"
-  echo
+  want="$1"
+  echo "waiting for the box to reboot and report $want ..."
+  i=0
+  while [ "$i" -lt 60 ]; do
+    i=$((i + 1))
+    cur="$(CURL -m 4 "http://$BOX/cgi-bin/checkver.cgi?t=$(date +%s)" 2>/dev/null || true)"
+    case "$cur" in
+      *"\"$want\""*) echo "box now: $cur"; return 0 ;;
+    esac
+    sleep 2
+  done
+  echo "timed out waiting for version $want; last: ${cur:-<no response>}" >&2
+  echo "re-check with: $0 status" >&2
+  return 1
 }
+
+# The version string inside a package (usr/z-loader/webversion).
+zip_version() { unzip -p "$1" usr/z-loader/webversion 2>/dev/null | tr -d '[:space:]'; }
 
 upload() {
   zip="$1"
   [ -f "$zip" ] || { echo "no such file: $zip" >&2; exit 1; }
   md5="$(md5of "$zip")"
+  want="$(zip_version "$zip")"
   echo "box before:  $(version)"
-  echo "uploading:   $zip ($(wc -c < "$zip" | tr -d ' ') bytes, md5 $md5)"
-  resp="$(CURL -m 120 -F "file=@$zip;filename=upload.zip" -F "md5=$md5" \
-    "http://$BOX/cgi-bin/upload.cgi")"
-  echo "response:    $resp"
+  echo "uploading:   $zip ($(wc -c < "$zip" | tr -d ' ') bytes, md5 $md5, version ${want:-?})"
+  # The box may drop the connection as it starts installing, so a curl error
+  # here is not necessarily a failure; confirm by polling the version below.
+  resp="$(CURL -S -m 120 -F "file=@$zip;filename=upload.zip" -F "md5=$md5" \
+    "http://$BOX/cgi-bin/upload.cgi" 2>&1 || true)"
+  echo "response:    ${resp:-<none>}"
   case "$resp" in
     *'"code": 0'*|*'"code":0'*) ;;
-    *) echo "upload rejected — box NOT updated." >&2; exit 1 ;;
+    *) echo "no success response — will still check whether it applied..." >&2 ;;
   esac
   echo "LED blinks while it installs — do not pull power."
-  wait_for_box
+  [ -n "$want" ] && wait_for_box "$want" || version
 }
 
 ensure_stock() {

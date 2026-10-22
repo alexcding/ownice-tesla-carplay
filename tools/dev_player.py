@@ -4,7 +4,8 @@
 A local HTTPS server reverse-proxies the box's web UI, applies
 tools/player_patches.py on the fly and serves player/worker.js and
 player/zq-settings.js. The page's WebSockets still go straight to the box.
-Resolution, frame rate and codec are chosen in the page (the "HD" button).
+Resolution, frame rate and codec are chosen in the page (the "Video" button in
+the home toolbar).
 
     python3 -I tools/dev_player.py
 

@@ -33,7 +33,7 @@ BASE_WEBVERSION = "2.9.11"
 # vendor version string: the box's "Check for updates" re-offers stock whenever
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
-PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay"
+# Project attribution shown in the player lives in player/zq-settings.js.
 CUSTOM_VERSION = "3.0-oc1"
 
 WEB = "usr/z-loader/zjinnova/web"
@@ -108,15 +108,21 @@ def main():
         WEBVERSION_PATH: args.version + "\n",
     }
     for dest, src in LOCAL_FILES.items():
-        files[dest] = src.read_text()
+        files[dest] = src.read_text(encoding="utf-8")
+
+    def entry(name, mode):
+        info = zipfile.ZipInfo(name)
+        info.external_attr = mode << 16  # unix permissions; default writestr leaves 0
+        info.compress_type = zipfile.ZIP_DEFLATED
+        return info
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        # update.sh is the vendor's own installer: `cp ./* / -fr`
-        z.writestr(zipfile.ZipInfo(UPDATE_SH_PATH), base.read(UPDATE_SH_PATH))
+        # update.sh is the vendor's own installer (`cp ./* / -fr`); keep it executable.
+        z.writestr(entry(UPDATE_SH_PATH, 0o755), base.read(UPDATE_SH_PATH))
         for dest, content in files.items():
-            z.writestr(dest, content)
+            z.writestr(entry(dest, 0o644), content)
 
     digest = hashlib.md5(out.read_bytes()).hexdigest()
     print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {args.version})")

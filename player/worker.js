@@ -44,7 +44,9 @@ let lastResync = 0;
 
 const intervals = [];
 let smoothDelay = 90;
+let smoothCounter = 0; // frames since the last delay re-evaluation
 let lastShow = 0;
+let lastShownStamp = -1; // timestamp of the last frame drawn, to keep display order
 let pending = 0;
 
 const stats = {inFrames: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0};
@@ -100,6 +102,14 @@ function draw(source, w, h) {
 }
 
 function showFrame(frame) {
+  // Never draw a frame older than one already shown (a late timer, an
+  // immediate-show under backpressure, or a pacing reset can race).
+  if (frame.timestamp < lastShownStamp) {
+    stats.dropped++;
+    frame.close();
+    return;
+  }
+  lastShownStamp = frame.timestamp;
   draw(frame, frame.displayWidth, frame.displayHeight);
   frame.close();
 }
@@ -119,7 +129,9 @@ function percentile(values, p) {
 function updateSmoothDelay(interval) {
   intervals.push(interval);
   if (intervals.length > WINDOW) intervals.shift();
-  if (intervals.length < 15 || intervals.length % 15) return;
+  // Re-evaluate every 15 frames via a dedicated counter (intervals.length
+  // saturates at WINDOW, a multiple of 15, so it can't gate the cadence).
+  if (intervals.length < 15 || ++smoothCounter % 15) return;
   const frameMs = Math.min(1000 / 24, Math.max(1000 / 60, median(intervals)));
   const jitter = intervals.map(v => Math.max(0, v - frameMs));
   const goal = Math.min(MAX_DELAY, Math.max(MIN_DELAY, percentile(jitter, 0.9) + MARGIN));
@@ -148,7 +160,12 @@ function scheduleFrame(frame, arrival) {
 
 function onDecoded(frame) {
   const arrival = arrivals.get(frame.timestamp);
-  arrivals.delete(frame.timestamp);
+  // Drop this and any earlier chunks that produced no output (e.g. an
+  // SPS/PPS-only chunk), so a stale entry can't fake a growing backlog.
+  for (const k of arrivals.keys()) {
+    if (k <= frame.timestamp) arrivals.delete(k);
+    else break;
+  }
   if (arrival !== undefined) {
     stats.decodeMs = stats.decodeMs * 0.9 + (performance.now() - arrival) * 0.1;
   }
@@ -187,9 +204,13 @@ function openDecoder(newCodec) {
 // Drop everything queued and ask the page for a fresh video socket (new IDR).
 function resync(reason) {
   const now = performance.now();
-  closeDecoder();
+  // Rate-limit before closing: a resync we requested <1 s ago is still in
+  // flight, so closing again here (without re-requesting) would freeze until
+  // the keyframe timeout. Leave the current decoder to be replaced by the
+  // pending new socket's SPS.
   if (now - lastResync < RESYNC_INTERVAL) return;
   lastResync = now;
+  closeDecoder();
   stats.resyncs++;
   sendLog(`resync: ${reason}`);
   self.postMessage({id: "resync"});

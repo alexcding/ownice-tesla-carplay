@@ -27,12 +27,12 @@ Notes for agents and contributors working on this repo.
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version 3.0) |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc1`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing |
 | `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, cert expiry |
 | `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback |
-| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution, fps, codec; "Video" button + Display Mode row |
+| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution, fps, codec, playback; "Video" button in the home toolbar + its panel |
 
 ## How the box works (Ownice T3 / zjinnova, firmware 2.9.11, build 202402031913)
 
@@ -113,7 +113,7 @@ Video frames are bare Annex B H.264 (no timestamp header) or JPEG (`FF D8`).
 | `Ue=.8` on every path | requests 80% of the window, then upscales | `Ue=__zq.scale` |
 | height cap 720 | at most 720p | `__zq.maxh` (Auto: 1200) |
 | `fps:30` | | `__zq.fps` (default 60) |
-| Display Mode row offers only "Compat." (LOW/NORMAL/HD code still present) | no way back to HD | row restored by `zq-settings.js` |
+| Display Mode row offers only "Compat." (LOW/NORMAL/HD code still present) | no way back to HD | HD/JPEG choice moved to our Video panel (`zq-settings.js`) |
 | entry page probes `https://<host>` and requires `ch < 1300` | stays on HTTP from `3.3.3.3` or tall screens | `INDEX_PATCHES` → `https://www.zbox.link` |
 | mousemove always sent as touch-down | hover drags CarPlay (mouse only; touch screens unaffected) | send only while `buttons&1` |
 | per-frame Vue label update, frame buffer copied to worker | main-thread overhead | removed / transferred |
