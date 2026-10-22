@@ -59,6 +59,7 @@ FLAG = "/data/local/tmp/zq_hevc"
 MODE_FILE = "/data/local/tmp/local_is_h264"
 CODEC_STATUS = "/usr/z-loader/zjinnova/web/zq-codec.txt"
 DIAG_ROOT = "/usr/z-loader/zjinnova/web/zq-video-"
+REPORT_UUID = b"ownice-zq-diag01"
 DIAG_FILES = {k: DIAG_ROOT + k + ".txt" for k in ("request", "phone", "sender", "output")}
 
 
@@ -92,6 +93,8 @@ class Machine:
         self.file_calls = []
         self.json_node = 0
         self.sent = []
+        self.reports = []
+        self.callback_order = []
         self.keyframes = []
         self.focus_changes = []
         self.force_error = 0
@@ -247,8 +250,13 @@ class Machine:
             return self.objects[a[0]][1]
         if name == "ScreenStreamSend_CB":
             ticks = self.get32(sp, 2)
-            self.sent.append((bytes(self.uc.mem_read(a[0], a[1])), a[2], a[3],
-                              ticks[0] | ticks[1] << 32))
+            data = bytes(self.uc.mem_read(a[0], a[1]))
+            if data[4:7] == b"\x4e\x01\x05" and data[8:24] == REPORT_UUID:
+                self.callback_order.append("report")
+                self.reports.append(data[24:-1].decode())  # diagnostic builds only
+            else:
+                self.callback_order.append("frame")
+                self.sent.append((data, a[2], a[3], ticks[0] | ticks[1] << 32))
             return 0
         if name == "CFStringCreateWithCString":
             if self.fail_cf: return 0
@@ -418,6 +426,27 @@ class NativeHEVCTests(unittest.TestCase):
             self.assertEqual([int(x, 16) for x in m.files[DIAG_FILES["output"]].split()], [len(data), 0x40, 0])
             self.assertEqual(m.uc.reg_read(UC_ARM_REG_SP), m.top)
 
+    def test_reports_do_not_consume_sender_or_output_checkpoints(self):
+        self.require_diagnostics()
+        text = b"zq events flags=00000404"
+        report = b"\0\0\0\1\x4e\x01\x05" + bytes([16 + len(text)]) + REPORT_UUID + text + b"\x80"
+        for base in (0, 0x18000000):
+            m = Machine("z-tesla", base)
+            ctx = m.allocate(bytes(0x200))
+            raw = m.allocate(report)
+            args = (raw, len(report), 0, ctx)
+            m.run(0x2fb0c, args, boundary=base + 0x2fb10)
+            self.assertNotIn(DIAG_FILES["sender"], m.files)
+            m.run(0x218d6, (0x1234, raw, len(report), 1), boundary=base + 0x218da)
+            self.assertNotIn(DIAG_FILES["output"], m.files)
+            self.assertEqual(m.native_writes, [(0x1234, report, 1)])
+            data = annex(b"\x40\x01\xaa")
+            raw = m.allocate(data)
+            m.run(0x2fb0c, (raw, len(data), 0, ctx), boundary=base + 0x2fb10)
+            m.run(0x218d6, (0x1234, raw, len(data), 1), boundary=base + 0x218da)
+            for key in ("sender", "output"):
+                self.assertEqual([int(x, 16) for x in m.files[DIAG_FILES[key]].split()][:2], [len(data), 0x40])
+
     def test_focus_dispatcher_repeated_carplay_focus_reaches_real_keyframe_hook(self):
         for base in (0, 0x18000000):
             for phone_type in (1, 5):
@@ -499,13 +528,15 @@ class NativeHEVCTests(unittest.TestCase):
     def test_invalid_config_preserves_previous_and_no_leak(self):
         m = Machine("libScreenStream.so")
         self.assertEqual(m.property("avcc", hvcc()), 0)
-        old = m.get32(m.context, 6)
+        # Diagnostic builds count failures in the upper half of the flags word.
+        def stable(): ctx = m.get32(m.context, 6); return ctx[:5] + (ctx[5] & 0x1ff,)
+        old = stable()
         for malformed in (b"", hvcc()[:-1], avcc()[:-1], hvcc(3), avcc(3), bytes(100)):
             self.assertNotEqual(m.property("avcc", malformed), 0)
-            self.assertEqual(m.get32(m.context, 6), old)
+            self.assertEqual(stable(), old)
         m.fail_malloc = True
         self.assertNotEqual(m.property("avcc", avcc()), 0)
-        self.assertEqual(m.get32(m.context, 6), old)
+        self.assertEqual(stable(), old)
         self.assertEqual(len(m.allocations), 1)
 
     def test_invalid_frames_always_complete_without_output(self):
@@ -520,6 +551,42 @@ class NativeHEVCTests(unittest.TestCase):
         self.assertEqual(len(m.completed), len(cases) + 1)
         self.assertFalse(m.sent)
         self.assertEqual(len(m.allocations), 1)
+
+    def test_diagnostic_converter_defers_events_and_resets_drop_streak(self):
+        self.require_diagnostics()
+        for base in (0, 0x18000000):
+            m = Machine("libScreenStream.so", base)
+            # Every rejection must survive a subsequent successful config.
+            key = m.object("str", "avcc")
+            self.assertNotEqual(m.run(0xcb4, (0x1234, 0, key, 0), (0,)), 0)
+            self.assertNotEqual(m.property("avcc", 1), 0)
+            self.assertNotEqual(m.property("avcc", b""), 0)
+            self.assertNotEqual(m.property("avcc", hvcc(3)), 0)
+            m.fail_malloc = True
+            self.assertNotEqual(m.property("avcc", hvcc()), 0)
+            m.fail_malloc = False
+            for _ in range(300):
+                self.assertNotEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
+            self.assertEqual(m.reports, [])  # no unsafe setup/failure callbacks
+            self.assertEqual(m.sent, [])
+            self.assertEqual(m.property("avcc", hvcc()), 0)
+            m.property("widthPixels", 1392); m.property("heightPixels", 1080)
+            self.assertEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
+            self.assertEqual(m.callback_order, ["frame", "report"])
+            self.assertIn("flags=012c", m.reports[-1])  # not capped at 255
+            self.assertIn("ff04", m.reports[-1])  # all event bits plus HEVC/length
+            self.assertEqual(m.get32(m.context + 20)[0], 0x104)
+            for _ in range(10):
+                self.assertNotEqual(m.frame(b""), 0)
+                self.assertEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
+            self.assertEqual(len(m.reports), 11)
+            self.assertIn("flags=00010304", m.reports[-1])  # good frame reset streak
+            # Even a complete counter wrap must retain the pending report.
+            m.put32(m.context + 20, 0xffff0104)
+            self.assertNotEqual(m.frame(b""), 0)
+            self.assertEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
+            self.assertIn("flags=00000304", m.reports[-1])
+            self.assertEqual(len(m.allocations), 1)
 
     def test_bounded_random_malformed_input(self):
         m = Machine("libScreenStream.so", 0x18000000)

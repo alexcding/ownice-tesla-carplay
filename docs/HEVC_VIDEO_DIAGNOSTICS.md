@@ -534,3 +534,76 @@ Release/README rollback instructions now link directly to the pinned official
 2.9.11 download and its MD5, recommend keeping a private local copy, and explain
 that the attached native restore ZIP needs only the on-device saved backup. The
 stock archive containing private TLS keys is not mirrored.
+
+#### 2026-10-22: oc11 diagnostic candidate after blackout review
+
+The owner reports intermittent HEVC black views after closing and reopening the
+Tesla browser. The supplied review says oc9 is installed and oc10 is an unflashed
+diagnostic candidate; neither identity was independently queried in this task.
+The blackout's cause remains unproven. Do not use the earlier oc10 artifact.
+
+The oc11 candidate changes `player/worker.js`, `player/zq-settings.js`,
+`tools/player_patches.py`, `tools/native/screen_hevc.c`,
+`tools/native/stream_diag_sender.c` and diagnostic compile-flag selection in
+`tools/native_hevc.py`. Existing uncommitted toolbar changes were preserved.
+
+- The player module awaits a bounded HEVC capability probe before sending INIT.
+  An explicit negative selects H.264 before startup; a thrown probe or timeout
+  remains inconclusive. Old browser-wide negative cache entries are ignored.
+- Both synchronous configure exceptions and asynchronous decoder refusals use
+  the same fallback sequence. Exhausting HEVC configurations stops further
+  decode/recovery requests. Successful output clears the displayed decoder error.
+- Runtime fallback verifies saved H.264 settings before reloading. Blocked storage
+  uses `?zq-h264=1` instead; explicitly selecting HEVC clears that override. A
+  refusal does not permanently blacklist a browser version. Phone reconnection
+  is still required to change an already negotiated phone codec.
+- Native setup never calls the frame sender. It records event bits in the
+  existing six-word context and emits a scalar-only UUID-tagged report after
+  a successfully converted frame's normal callback. Sender/output checkpoints
+  explicitly exclude these reports, including across a checkpoint reset.
+- Flags bits 10–15 retain all observed configuration event classes since the
+  last report: accepted, null key/value, wrong type, empty record, malformed
+  record/invalid dimensions, allocation failure. Repetitions coalesce. Missing
+  context cannot retain events. Bits 16–31 count the current dropped-frame
+  streak modulo 65536; bit 9 retains pending drops even at a complete wrap.
+  Good frames report and clear the streak. Reporting has no eight-report cap.
+  This preserves the stock allocation and avoids additional state lifetimes.
+
+These reports cannot diagnose a permanently failing converter in real time:
+they wait for a valid frame, and a callback does not prove browser delivery.
+Use the separate request/phone/sender/output checkpoints to locate a failure
+when no report arrives. Device behavior of the revised in-band reporting remains
+unvalidated; the candidate is diagnostic, not a confirmed blackout fix.
+
+Built the **full** `2.9.11-oc11-hevc` package with browser files, ChaCha20,
+`--native-video-diag` and `--hevc-keep-video-focus`; no Wi-Fi experiment. The
+default `CUSTOM_VERSION` remains oc8; the candidate version is explicit.
+
+```sh
+python3 -I tools/build_patch.py --firmware build/base/update_tesla0817.zip \
+  --native-hevc --native-video-diag --hevc-keep-video-focus \
+  --version 2.9.11-oc11-hevc \
+  --out build/oc11/update_tesla_hevc_2.9.11-oc11-hevc.zip
+```
+
+Validation: 32 compiled ARM tests pass, including real HEVC packet pixel-hash
+comparison, rejection classes, 300 dropped frames, repeated recovery, full
+counter wrap, callback order and diagnostic checkpoint exclusion at two load
+bases. All 18 package install/rollback tests pass. Settings, worker and focus
+JavaScript regressions pass, including blocked storage and synchronous refusal.
+The packaged module passes syntax checking. Package integrity, version, safe
+paths, absence of keys/certificates and correspondence with tested native/browser
+payloads were checked. `git diff --check` passes.
+
+Local artifacts (ignored, not published):
+
+- `build/oc11/update_tesla_hevc_2.9.11-oc11-hevc.zip` (2,092,177 bytes), SHA-256
+  `6b5db40bb2ea0079620bc689c4a5a27a5dc69d8a7974414d9691d6e4c0eb13e3`.
+- `build/oc11/restore_native_2.9.11-oc11-hevc.zip`, SHA-256
+  `ebbe623d43d2a3a736456447d7ca54bebccd3257eddf2553cd8eb77434f6d940`.
+
+Rollback uses the matching native restore package and saved stock backups, or
+`tools/flash.sh rollback` for full stock. Upload and subsequent reboot each need
+the owner's explicit authorization. No device settings, upload, reboot, commit,
+push or release was performed. Tesla close/reopen, extended idle and hardware
+recovery remain to be validated after an authorized deployment.

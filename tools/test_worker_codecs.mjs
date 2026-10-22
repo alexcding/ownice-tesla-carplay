@@ -51,3 +51,74 @@ assert.equal(vm.runInContext("hevc", context), false);
 assert.equal(vm.runInContext("stats.gaps", context), 1);
 assert.equal(vm.runInContext("stats.inBytes", context), 0);
 console.log("AVC gaps detected; HEVC bypasses AVC checks; AVC fallback and both stats sets preserved.");
+
+// Every HEVC decoder config refused: flagged for the page instead of looping.
+vm.runInContext(`
+  var refusals = 0;
+  VideoDecoder = class {
+    constructor(init) { this.init = init; }
+    configure() { const init = this.init; Promise.resolve().then(() =>
+      init.error({name: "NotSupportedError", message: "unsupported codec"})); }
+    close() {}
+  };
+  setTimeout = () => 0; clearTimeout = () => {};
+`, context);
+for (const tag of ["hvc1", "hvc1", "hev1"]) {
+  vm.runInContext(`lastResync = -Infinity; openDecoder("${tag}.1.6.L120.B0")`, context);
+  await Promise.resolve();
+}
+assert.equal(vm.runInContext("hevcUnsupported", context), true);
+assert.match(vm.runInContext("lastError", context), /NotSupportedError/);
+console.log("Refused HEVC configs (tuned, plain hvc1, hev1) flag HEVC as unsupported.");
+
+// Diagnostic native builds report converter events as a UUID-tagged SEI that is never decoded.
+{
+  const text = "zq config rejected err=ffffe59c";
+  const sei = Uint8Array.from([0, 0, 0, 1, 0x4e, 1, 5, 16 + text.length,
+    ..."ownice-zq-diag01", ...text].map(c => typeof c === "string" ? c.charCodeAt(0) : c).concat([0x80]));
+  context.sei = sei;
+  vm.runInContext("decodeCalls = 0; var origDecode = decodeH264; decodeH264 = (...a) => { decodeCalls++; return origDecode(...a); }; handleData(sei)", context);
+  assert.equal(vm.runInContext("decodeCalls", context), 0);
+  assert.equal(vm.runInContext("stats.nativeReport", context), text);
+  context.plain = Uint8Array.from([0, 0, 0, 1, 0x4e, 1, 5, 4, 1, 2, 3, 4, 0x80]);
+  assert.equal(vm.runInContext("nativeReport(plain)", context), "");
+  console.log("Native converter reports are shown and never decoded; other SEI is untouched.");
+}
+
+// Keep feeding an unsupported stream well beyond retry/keyframe deadlines.
+// Neither incoming SPS nor timeout recovery may reopen the decoder/socket.
+vm.runInContext(`
+  var stoppedResyncs = stats.resyncs;
+  var stoppedOpens = 0;
+  VideoDecoder = class { constructor() { stoppedOpens++; } };
+  performance.now = () => 60000;
+  for (let i = 0; i < 100; i++) { decodeH264(input, 60000 + i * 4000); resync("timeout", true); }
+`, context);
+assert.equal(vm.runInContext("stats.resyncs === stoppedResyncs && stoppedOpens === 0 && retryTimer === 0", context), true);
+
+// configure() can also throw synchronously. It must follow the same three
+// attempts, then stop. A good output clears the panel's transient error.
+vm.runInContext(`
+  hevcUnsupported = false; tuned = true; hevcTag = "hvc1";
+  VideoDecoder = class {
+    constructor(init) { this.init = init; }
+    configure() { throw {name: "NotSupportedError", message: "sync refusal"}; }
+    close() {}
+  };
+`, context);
+for (const tag of ["hvc1", "hvc1", "hev1"]) {
+  vm.runInContext(`lastResync = -Infinity; openDecoder("${tag}.1.6.L120.B0")`, context);
+}
+assert.equal(vm.runInContext("hevcUnsupported", context), true);
+vm.runInContext(`
+  hevcUnsupported = false;
+  VideoDecoder = class {
+    constructor(init) { this.init = init; }
+    configure() {} close() {}
+  };
+  onDecoded = () => {};
+  openDecoder("hvc1.1.6.L120.B0");
+  decoder.init.output({close() {}});
+`, context);
+assert.equal(vm.runInContext("lastError", context), "");
+console.log("Unsupported streams stay stopped after deadlines; synchronous refusal is bounded; successful output clears errors.");

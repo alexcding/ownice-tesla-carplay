@@ -56,6 +56,55 @@
   // Reject malformed stored modes; HEVC needs the matching native package.
   if (![0, 1, 2].includes(settings.vmode) || (!NATIVE_HEVC && settings.vmode === 2)) settings.vmode = 1;
   delete settings.h264;
+
+  // Probe before the module sends INIT. Do not persist a decoder refusal as
+  // a browser-wide blacklist: resource exhaustion can be temporary.
+  const HEVC_PROBES = ["hvc1.1.6.L120.B0", "hev1.1.6.L120.B0"];
+  const hevcSupport = {ok: null};
+  const fallbackURL = new URL(location.href);
+  const forcedH264 = fallbackURL.searchParams.get("zq-h264") === "1";
+  let hevcBlocked = forcedH264 && settings.vmode === 2;
+  let hevcFailedBy = "";
+  function hevcFailed(by) {
+    if (hevcFailedBy) return;
+    hevcFailedBy = by;
+    hevcSupport.ok = false;
+    hevcBlocked = true;
+    if (settings.vmode !== 2 || window.__zq.mode !== 2) return;
+    // Verify persistence before reloading. A URL override also works when
+    // storage is blocked, and selecting HEVC explicitly clears the override.
+    const fallback = {...settings, vmode: 1};
+    save(fallback);
+    let stored = false;
+    try { stored = JSON.parse(localStorage.getItem(KEY)).vmode === 1; } catch (e) {}
+    if (stored) location.reload();
+    else {
+      fallbackURL.searchParams.set("zq-h264", "1");
+      location.replace(fallbackURL.href);
+    }
+  }
+  const hevcReady = (async () => {
+    await Promise.resolve(); // __zq is published before a synchronous probe result
+    if (!NATIVE_HEVC || settings.vmode !== 2 || forcedH264) return;
+    const decoder = window.VideoDecoder;
+    if (!decoder) hevcSupport.ok = false;
+    else if (decoder.isConfigSupported) {
+      let timer;
+      try {
+        const results = await Promise.race([
+          Promise.all(HEVC_PROBES.map(codec => Promise.resolve().then(() =>
+            decoder.isConfigSupported({codec})).then(r => !!r.supported, () => null))),
+          new Promise(resolve => { timer = setTimeout(() => resolve([null]), 1500); }),
+        ]);
+        // A failed API call or timeout is inconclusive, not lack of support.
+        hevcSupport.ok = results.some(r => r === true) ? true : results.every(r => r === false) ? false : null;
+      } finally { clearTimeout(timer); }
+    }
+    if (hevcSupport.ok === false) {
+      hevcBlocked = true;
+      window.__zq.mode = 1;
+    }
+  })();
   if (DEV_PROXY) settings.debug = true;
 
   // Debug overlay only: read the control socket's session messages (the box's
@@ -257,7 +306,8 @@
     },
     maxh: target || (hd ? HD_MAX_HEIGHT : AUTO_MAX_HEIGHT),
     fps: settings.fps,
-    mode: settings.vmode,
+    hevcReady,
+    mode: hevcBlocked ? 1 : settings.vmode,
     h264: settings.vmode > 0, // compat: any non-zero mode is compressed passthrough
 
     smooth: settings.smooth,
@@ -274,11 +324,11 @@
   const CSS = `
     /* CarPlay gets every touch: no browser pan/zoom gesture detection on the player */
     .player-box{touch-action:none}
-    /* match the vendor toolbar buttons (.settings-btn / .refresh-btn) */
+    /* match the vendor toolbar buttons (.settings-btn / .refresh-btn): a 30px icon on a gray pill */
     #zq-btn{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
-      height:50px;margin-left:30px;padding:0 20px;border-radius:26px;border:0;cursor:pointer;
-      background:#F0F0F0;color:#6d6d6d;box-shadow:0 2px 4px #0003;
-      font:600 20px system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+      width:86px;height:50px;margin-left:30px;padding:0;border-radius:26px;border:0;cursor:pointer;
+      background:#F0F0F0;color:#6d6d6d;box-shadow:0 2px 4px #0003;-webkit-user-select:none;user-select:none}
+    #zq-btn svg{width:30px;height:30px;pointer-events:none}
     /* match the vendor settings card: light surface, gray pills, blue accent */
     #zq-panel{position:fixed;top:60px;right:8px;z-index:99999;width:300px;padding:18px;border-radius:20px;
       background:#fff;color:#222;font:16px system-ui,sans-serif;box-shadow:0 6px 24px #0004;display:none;
@@ -339,6 +389,8 @@
     return [`Wi-Fi ch ${wifi.channel}`, band, wifi.mode, wifi.country].filter(Boolean).join(" · ");
   }
 
+  const HEVC_NOTE = "HEVC is unavailable in this session; using H.264. Reconnect your phone if the picture stays black.";
+
   // Name the live stream codec for the stats readout, rather than assuming H.264.
   function codecName(codec) {
     if (/^(hvc1|hev1)\./.test(codec || "")) return "HEVC";
@@ -372,7 +424,10 @@
       sockLine,
       box,
       `resyncs ${s.resyncs} · gaps ${s.gaps || 0}${s.smooth ? ` · delay ${s.delayMs} ms` : ""}` +
-        ` · mode ${["JPEG", "H.264", "HEVC"][settings.vmode]}`,
+        ` · mode ${["JPEG", "H.264", "HEVC"][window.__zq.mode]}`,
+      ...(s.error ? [`decoder error ${s.error}`] : []),
+      ...(s.nativeReports ? [`native ×${s.nativeReports}: ${s.nativeReport}`] : []),
+      ...(hevcBlocked ? [HEVC_NOTE] : []),
     ].join("\n");
   }
 
@@ -401,7 +456,12 @@
 
     const btn = document.createElement("button");
     btn.id = "zq-btn";
-    btn.textContent = `Video · ${settings.res === "auto" ? "Auto" : hd ? "Auto HD" : settings.res + "p"}`;
+    btn.title = "Video settings";
+    btn.setAttribute("aria-label", "Video settings");
+    // Video camera icon, drawn in the button's text color
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"' +
+      ' stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/>' +
+      '<path d="M16 10.5l6-3.5v10l-6-3.5z"/></svg>';
     const panel = document.createElement("div");
     panel.id = "zq-panel";
 
@@ -419,7 +479,7 @@
         ...group("Resolution", "res", RESOLUTIONS, draft, render),
         ...group("Frame rate", "fps", [[30, "30"], [60, "60"]], draft, render),
         ...group("Video", "vmode", NATIVE_HEVC
-          ? [[2, "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]
+          ? [[2, hevcSupport?.ok === false ? "HEVC (retry)" : "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]
           : [[1, "H.264 (HD)"], [0, "JPEG (compatible)"]], draft, render),
         ...group("Playback", "smooth", [[false, "Low latency"], [true, "Smooth"]], draft, render),
         ...group("Video socket", "sock", [["worker", "Worker (fast)"], ["page", "Page (stock)"]], draft, render),
@@ -431,6 +491,11 @@
       apply.className = "apply";
       apply.textContent = "Apply & reload";
       apply.onclick = () => {
+        if (draft.vmode === 2) {
+          const url = new URL(location.href);
+          url.searchParams.delete("zq-h264");
+          history.replaceState(null, "", url.href);
+        }
         save(draft);
         location.reload();
       };
@@ -452,6 +517,9 @@
       const lines = [`Window ${document.documentElement.clientWidth}×${document.documentElement.clientHeight}` +
         ` @${window.devicePixelRatio || 1}x`, wifiLine(), touchLine(), wakeLine()];
       if (codecError) lines.push(codecError);
+      if (hevcBlocked) lines.push(HEVC_NOTE);
+      if (s && s.error) lines.push(`Decoder error ${s.error}`);
+      if (s && s.nativeReports) lines.push(`Native ×${s.nativeReports}: ${s.nativeReport}`);
       if (s && s.codec) {
         const name = codecName(s.codec);
         lines.push(`Stream ${s.size} ${name ? `${name} · ` : ""}${s.codec}`);
@@ -477,6 +545,7 @@
       document.body.append(overlay);
     }
     setInterval(() => {
+      if (window.__zq.stats?.hevcUnsupported) hevcFailed("decode");
       if (panel.classList.contains("open")) updateInfo();
       if (overlay) overlay.textContent = debugText();
     }, 1000);

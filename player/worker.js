@@ -45,6 +45,8 @@ let codec = "";
 let tuned = true; // cleared once the browser refuses optimizeForLatency/prefer-hardware
 let hevc = false; // the stream is HEVC (set on its first VPS, reset with the renderer)
 let hevcTag = "hvc1"; // "hev1" once the browser refuses hvc1 for Annex B input
+let hevcUnsupported = false; // the browser refused HEVC with every fallback: the page switches to H.264
+let lastError = ""; // last decoder error, for the Video panel and debug overlay
 let waitingForKeyFrame = true;
 let waitingSince = 0;
 let timestamp = 0;
@@ -375,43 +377,52 @@ function closeDecoder() {
 }
 
 function openDecoder(newCodec) {
+  if (hevcUnsupported && /^(hvc1|hev1)\./.test(newCodec)) return;
   closeDecoder();
-  const d = new VideoDecoder({
+  let d;
+  const onDecoderError = (e) => {
+    if (decoder !== d) return;
+    sendLog(`decode error: ${e.name}: ${e.message}`);
+    lastError = `${e.name}: ${e.message}`;
+    if (e.name === "NotSupportedError" && tuned) {
+      tuned = false;
+    } else if (e.name === "NotSupportedError" && hevcTag === "hvc1" && codec.startsWith("hvc1.")) {
+      hevcTag = "hev1";
+    } else if (e.name === "NotSupportedError" && /^(hvc1|hev1)\./.test(codec)) {
+      hevcUnsupported = true;
+    }
+    closeDecoder();
+    if (!hevcUnsupported) resync("decode error", true);
+  };
+  d = new VideoDecoder({
     output(frame) {
-      if (decoder === d) onDecoded(frame);
+      if (decoder === d) { lastError = ""; onDecoded(frame); }
       else frame.close(); // late output of a replaced decoder
     },
-    error(e) {
-      if (decoder !== d) return; // a replaced decoder
-      sendLog(`decode error: ${e.name}: ${e.message}`);
-      if (e.name === "NotSupportedError" && tuned) {
-        tuned = false; // retry without the latency/hardware hints
-        sendLog("falling back to a plain decoder config");
-      } else if (e.name === "NotSupportedError" && hevcTag === "hvc1" && codec.startsWith("hvc1.")) {
-        hevcTag = "hev1"; // the next SPS builds an hev1 string
-        sendLog("falling back to hev1");
-      }
-      // The browser has already closed it; drop it even if resync() is
-      // rate-limited, so the next SPS reopens instead of decoding into a
-      // closed decoder.
-      closeDecoder();
-      resync("decode error", true);
-    },
+    error: onDecoderError,
   });
   d.ondequeue = () => {
     lastProgress = performance.now();
     decoderReady = true;
   };
-  d.configure(tuned
-    ? {codec: newCodec, optimizeForLatency: true, hardwareAcceleration: "prefer-hardware"}
-    : {codec: newCodec});
   decoder = d;
   codec = newCodec;
+  try {
+    d.configure(tuned
+      ? {codec: newCodec, optimizeForLatency: true, hardwareAcceleration: "prefer-hardware"}
+      : {codec: newCodec});
+  } catch (e) {
+    // configure may reject synchronously as well as through error().
+    // Route both failure modes through the same bounded fallback sequence.
+    onDecoderError(e);
+    return;
+  }
   sendLog(`decoder configured: ${newCodec}${tuned ? "" : " (plain)"}${SMOOTH ? " (smooth)" : ""}`);
 }
 
 // Drop everything queued and ask the page for a fresh video socket (new IDR).
 function resync(reason, retry = false) {
+  if (hevcUnsupported) return;
   const now = performance.now();
   // Rate-limit before closing: a resync we requested <1 s ago is still in
   // flight, so closing again here (without re-requesting) would freeze until
@@ -475,6 +486,7 @@ function checkBacklog(now) {
 }
 
 function decodeH264(data, now) {
+  if (hevcUnsupported) return;
   stats.inFrames++;
   if (lastInput && now - lastInput > PAUSE_GAP) {
     self.postMessage({id: "wake", t: performance.timeOrigin + now});
@@ -526,7 +538,25 @@ function decodeH264(data, now) {
   decoder.decode(new EncodedVideoChunk({type: key ? "key" : "delta", timestamp, data}));
 }
 
+// Diagnostic native builds report converter events in-band as an HEVC prefix
+// SEI (user_data_unregistered) with this UUID and ASCII text; never decoded.
+const NATIVE_REPORT = "ownice-zq-diag01";
+function nativeReport(d) {
+  if (d.length < 25 || d[0] || d[1] || d[2] !== 0 || d[3] !== 1 || d[4] !== 0x4e || d[5] !== 1 || d[6] !== 5) return "";
+  const end = 8 + d[7];
+  if (end + 1 !== d.length || d[end] !== 0x80) return "";
+  for (let i = 0; i < 16; i++) if (d[8 + i] !== NATIVE_REPORT.charCodeAt(i)) return "";
+  return String.fromCharCode(...d.subarray(24, end));
+}
+
 function handleData(d) {
+  const report = nativeReport(d);
+  if (report) {
+    stats.nativeReports = (stats.nativeReports || 0) + 1;
+    stats.nativeReport = report;
+    sendLog(`native: ${report}`);
+    return;
+  }
   stats.inBytes += d.length;
   lastData = performance.now();
   lastJpeg = d.length >= 2 && d[0] === 0xff && d[1] === 0xd8;
@@ -632,6 +662,10 @@ setInterval(() => {
     params: stats.params,
     socket: !!socket,
     codec,
+    error: lastError,
+    nativeReport: stats.nativeReport || "",
+    nativeReports: stats.nativeReports || 0,
+    hevcUnsupported,
     size: canvas ? `${canvas.width}x${canvas.height}` : "",
   });
   stats.inFrames = 0;

@@ -16,6 +16,8 @@ PLAYER_HTML_PATCHES = [
 
 # Values come from window.__zq, defined by player/zq-settings.js.
 BUNDLE_PATCHES = [
+    ("wait for HEVC capability probe before player startup",
+     "const Gf=function(){", "await window.__zq.hevcReady;const Gf=function(){", 1),
     ("picture scale factor (stock 0.8)", "Ue=.8", "Ue=__zq.scale", 8),
     ("max stream height (stock 720)", "at>720){var Wf=720*ae/at,$f=720",
      "at>__zq.maxh){var Wf=__zq.maxh*ae/at,$f=__zq.maxh", 1),

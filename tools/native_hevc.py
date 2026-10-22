@@ -396,7 +396,8 @@ zq_diag_write_entry:
     objects = []
     for source in [stub, *(SOURCES / f for f in cfiles)]:
         obj = directory / (source.stem + ".o")
-        subprocess.run([compiler, *flags, "-c", str(source), "-o", str(obj)], check=True)
+        extra = ["-DZQ_DIAG"] if diagnostics and source.name == "screen_hevc.c" else []
+        subprocess.run([compiler, *flags, *extra, "-c", str(source), "-o", str(obj)], check=True)
         objects.append(str(obj))
     script = directory / "payload.ld"
     definitions = "\n".join(f"{k} = {v};" for k, v in constants.items()

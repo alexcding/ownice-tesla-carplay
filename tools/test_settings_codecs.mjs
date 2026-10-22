@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../player/zq-settings.js", import.meta.url)
 function settings(saved, native) {
   const window = {addEventListener() {}};
   const context = vm.createContext({
-    window, navigator: {maxTouchPoints: 0}, performance: {now: () => 0},
+    window, URL, location: {href: "https://box/player.html"}, navigator: {maxTouchPoints: 0}, performance: {now: () => 0},
     document: {body: null, addEventListener() {}},
     localStorage: {getItem: () => typeof saved === "string" ? saved : JSON.stringify(saved)},
   });
@@ -39,6 +39,7 @@ class Element {
   appendChild(child) { this.append(child); return child; }
   replaceChildren(...children) { this.children = children; }
   addEventListener() {}
+  setAttribute() {}
   remove() {}
   getBoundingClientRect() { return {right: 300, bottom: 20}; }
   querySelector(selector) {
@@ -62,9 +63,9 @@ for (const native of [false, true]) {
   };
   const window = {addEventListener() {}, innerWidth: 1280, innerHeight: 720};
   const context = vm.createContext({
-    window, document, navigator: {maxTouchPoints: 0}, performance: {now: () => 0},
+    window, document, URL, history: {replaceState() {}}, navigator: {maxTouchPoints: 0}, performance: {now: () => 0},
     localStorage: {getItem: () => "{}", setItem: (key, value) => { saved = JSON.parse(value); }},
-    location: {reload: () => { reloads++; }}, setInterval() {},
+    location: {href: "https://box/player.html", reload: () => { reloads++; }}, setInterval() {},
     MutationObserver: class {observe() {}}, Date: class {static now() { return 0; }},
     fetch: async (url, options) => {
       assert.equal(url, "/zq-codec.txt");
@@ -95,3 +96,51 @@ for (const native of [false, true]) {
   assert.equal(reloads, native ? 3 : 2);
 }
 console.log("Panel exposes supported codecs, retains reconnect guidance and stream stats, and saves numeric modes before reloading.");
+
+// Startup must settle capability before the bundle sends INIT. Refusals are
+// session-scoped; blocked storage must still allow a bounded runtime fallback.
+async function hevcLoad({probe, blocked = false, url = "https://box/player.html", stale} = {}) {
+  const store = {"zq.settings": JSON.stringify({vmode: 2}), "zq.hevc": JSON.stringify(stale)};
+  const elements = [];
+  let ready, tick, reloads = 0, replacement;
+  const window = {addEventListener() {}};
+  if (probe !== undefined) window.VideoDecoder = {isConfigSupported: async () => {
+    if (probe instanceof Error) throw probe;
+    return {supported: probe};
+  }};
+  const document = {
+    body: null, head: new Element(), documentElement: {clientWidth: 1280, clientHeight: 720},
+    addEventListener(event, fn) { if (event === "DOMContentLoaded") ready = fn; },
+    createElement() { const el = new Element(); elements.push(el); return el; },
+    querySelector: () => null, querySelectorAll: () => [],
+  };
+  const context = vm.createContext({
+    window, document, URL, setTimeout, clearTimeout,
+    navigator: {maxTouchPoints: 0, userAgent: "car/1"}, performance: {now: () => 0},
+    localStorage: {getItem: key => store[key] ?? null, setItem: (key, value) => {
+      if (blocked) throw Error("blocked"); store[key] = value;
+    }},
+    location: {href: url, reload() { reloads++; }, replace(value) { replacement = value; }},
+    setInterval(fn) { tick = fn; }, MutationObserver: class {observe() {}},
+    Date, fetch: async () => ({ok: false}),
+  });
+  vm.runInContext(source.replace("const NATIVE_HEVC = false;", "const NATIVE_HEVC = true;"), context);
+  await window.__zq.hevcReady;
+  document.body = new Element(); ready();
+  return {window, store, tick, get reloads() { return reloads; }, get replacement() { return replacement; }};
+}
+let r = await hevcLoad({probe: false});
+assert.equal(r.window.__zq.mode, 1); assert.equal(r.reloads, 0);
+r = await hevcLoad({probe: true, stale: {ua: "car/1", ok: false, by: "decode"}});
+assert.equal(r.window.__zq.mode, 2); // a previous refusal cannot ban a working decoder
+r.window.__zq.stats = {hevcUnsupported: true};
+r.tick(); r.tick();
+assert.equal(r.reloads, 1); assert.equal(JSON.parse(r.store["zq.settings"]).vmode, 1);
+r = await hevcLoad({probe: true, blocked: true});
+r.window.__zq.stats = {hevcUnsupported: true}; r.tick(); r.tick();
+assert.equal(r.reloads, 0); assert.match(r.replacement, /zq-h264=1/);
+r = await hevcLoad({probe: true, blocked: true, url: r.replacement});
+assert.equal(r.window.__zq.mode, 1); r.tick(); assert.equal(r.replacement, undefined);
+r = await hevcLoad(); assert.equal(r.window.__zq.mode, 1); // no VideoDecoder
+r = await hevcLoad({probe: Error("temporary")}); assert.equal(r.window.__zq.mode, 2);
+console.log("Startup gates INIT, blocked storage falls back once, and transient refusals do not permanently ban HEVC.");

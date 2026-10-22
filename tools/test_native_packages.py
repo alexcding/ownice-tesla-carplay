@@ -329,7 +329,7 @@ class PackageTests(unittest.TestCase):
             settings = z.read("usr/z-loader/zjinnova/web/zq-settings.js")
             self.assertIn(b"const NATIVE_HEVC = true;", settings)
             self.assertNotIn(b"const NATIVE_HEVC = false;", settings)
-            self.assertIn(b'[[2, "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]', settings)
+            self.assertIn(b'"HEVC (retry)" : "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]', settings)
             self.assertIn(b'changes take effect after you reconnect your phone', settings)
             self.assertIn(b'Reloading this page alone keeps the current codec', settings)
             self.assertIn(b'For JPEG, disconnect the phone before saving, then reconnect', settings)
