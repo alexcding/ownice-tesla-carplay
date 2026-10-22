@@ -14,9 +14,15 @@ const SMOOTH = new URLSearchParams(self.location.search).get("smooth") === "1";
 
 // Backlog recovery (ms)
 const PAUSE_GAP = 120; // input gap that marks a still screen; held frames are not backlog
+const CLEAR_AGE = 150; // oldest undecoded frame younger than this: no backlog
+const CLEAR_SPAN = 50; // queued frames spanning less than this: nothing to drain
+const MIN_SPAN = 100; // span needed before an old frame counts as backlog
 const SOFT_AGE = 250; // backlog worth watching
 const SOFT_GRACE = 750; // ...that must keep growing this long before we resync
+const GROW_SPAN = 100; // "growing": the span rose this much...
+const GROW_FRAMES = 4; // ...or the queue this many frames (a draining burst does neither)
 const HARD_AGE = 1500; // resync immediately
+const STALL = 500; // decoder holds queued input this long without progress
 const RESYNC_INTERVAL = 1000; // at most one resync per second
 const KEYFRAME_TIMEOUT = 3000; // still no key frame after a resync: try again
 
@@ -27,10 +33,13 @@ const MAX_DELAY = 200;
 const MARGIN = 20;
 const MAX_PENDING = 6; // decoded frames waiting to be shown
 
+const RENDER_NOTE_INTERVAL = 250; // ms between "render" notes to the page
+
 let canvas = null;
 let ctx = null;
 let decoder = null;
 let codec = "";
+let tuned = true; // cleared once the browser refuses optimizeForLatency/prefer-hardware
 let waitingForKeyFrame = true;
 let waitingSince = 0;
 let timestamp = 0;
@@ -38,13 +47,21 @@ let frameDimen = {w: 0, h: 0};
 
 const arrivals = new Map(); // chunk timestamp -> arrival time, insertion ordered
 let lastInput = 0;
+let lastQueued = 0; // arrival time of the newest chunk sent to the decoder
+let lastProgress = 0; // last time the decoder consumed input or produced output
+let decoderReady = false; // the current decoder has consumed input (configure is done)
+let retryTimer = 0;
+let lastRenderNote = -Infinity;
+let renderSince = -1; // first frame drawn since the last reset
 let softSince = 0;
-let softStartAge = 0;
+let softStartSpan = 0;
+let softStartQueue = 0;
 let lastResync = 0;
 
 const intervals = [];
 let smoothDelay = 90;
 let smoothCounter = 0; // frames since the last delay re-evaluation
+let smoothFrameMs = 1000 / 60; // median frame interval, refreshed with the delay
 let lastShow = 0;
 let lastShownStamp = -1; // timestamp of the last frame drawn, to keep display order
 let pending = 0;
@@ -55,35 +72,31 @@ function sendLog(message) {
   self.postMessage(message);
 }
 
-// Yields [nalType, payloadOffset] for each NAL unit in an Annex B buffer.
-function* nalUnits(data) {
-  for (let i = 0; i + 3 < data.length; i++) {
-    if (data[i] === 0 && data[i + 1] === 0) {
-      if (data[i + 2] === 1) {
-        yield [data[i + 3] & 0x1f, i + 3];
-        i += 2;
-      } else if (data[i + 2] === 0 && data[i + 3] === 1 && i + 4 < data.length) {
-        yield [data[i + 4] & 0x1f, i + 4];
-        i += 3;
-      }
-    }
-  }
-}
-
 function hex(b) {
   return b.toString(16).padStart(2, "0");
 }
 
+// Walks the Annex B NAL headers up to the first slice. Parameter sets precede
+// the picture data, so the slice payload (most of the buffer) is never scanned.
 function inspect(data) {
   let key = false;
   let spsCodec = "";
-  for (const [type, at] of nalUnits(data)) {
-    if (type === 5) key = true;
-    if (type === 7 && at + 3 < data.length) {
+  const n = data.length;
+  for (let i = 0; i + 3 < n; i++) {
+    if (data[i] !== 0 || data[i + 1] !== 0) continue;
+    let at;
+    if (data[i + 2] === 1) at = i + 3;
+    else if (data[i + 2] === 0 && data[i + 3] === 1 && i + 4 < n) at = i + 4;
+    else continue;
+    const type = data[at] & 0x1f;
+    if (type === 7 && at + 3 < n) {
       key = true;
       spsCodec = `avc1.${hex(data[at + 1])}${hex(data[at + 2])}${hex(data[at + 3])}`;
+    } else if (type >= 1 && type <= 5) {
+      if (type === 5) key = true;
+      break; // slice data follows
     }
-    if (type === 1) break; // slice data follows; no parameter sets after this
+    i = at;
   }
   return {key, spsCodec};
 }
@@ -98,7 +111,17 @@ function draw(source, w, h) {
   }
   ctx.drawImage(source, 0, 0, cw, ch, 0, 0, cw, ch);
   stats.shown++;
-  self.postMessage({id: "render"});
+  // The page only needs to know frames are arriving (it flips a "playing"
+  // flag), so spare its main thread a task per frame.
+  const now = performance.now();
+  // Note every frame for the first second after a reset: the page ignores
+  // notes until its session reaches STARTED, and a still screen may not send
+  // another frame for a while.
+  if (now - renderSince < 1000 || now - lastRenderNote >= RENDER_NOTE_INTERVAL) {
+    if (renderSince < 0) renderSince = now;
+    lastRenderNote = now;
+    self.postMessage({id: "render"});
+  }
 }
 
 function showFrame(frame) {
@@ -131,8 +154,10 @@ function updateSmoothDelay(interval) {
   if (intervals.length > WINDOW) intervals.shift();
   // Re-evaluate every 15 frames via a dedicated counter (intervals.length
   // saturates at WINDOW, a multiple of 15, so it can't gate the cadence).
-  if (intervals.length < 15 || ++smoothCounter % 15) return;
-  const frameMs = Math.min(1000 / 24, Math.max(1000 / 60, median(intervals)));
+  // Until 15 intervals exist, keep the frame interval current every frame (cheap while short).
+  if (intervals.length >= 15 && ++smoothCounter % 15) return;
+  const frameMs = smoothFrameMs = Math.min(1000 / 24, Math.max(1000 / 60, median(intervals)));
+  if (intervals.length < 15) return;
   const jitter = intervals.map(v => Math.max(0, v - frameMs));
   const goal = Math.min(MAX_DELAY, Math.max(MIN_DELAY, percentile(jitter, 0.9) + MARGIN));
   // move gradually: up at most 15 ms, down at most 7.5 ms per evaluation (15 frames)
@@ -141,8 +166,7 @@ function updateSmoothDelay(interval) {
 
 function scheduleFrame(frame, arrival) {
   const now = performance.now();
-  const frameMs = intervals.length ? Math.min(1000 / 24, Math.max(1000 / 60, median(intervals))) : 1000 / 60;
-  let at = Math.max(arrival + smoothDelay, lastShow + frameMs * 0.9);
+  let at = Math.max(arrival + smoothDelay, lastShow + smoothFrameMs * 0.9);
   if (at - now > MAX_DELAY) at = now + smoothDelay; // never let pacing build up latency
   if (at <= now || pending >= MAX_PENDING) {
     if (at <= now) stats.late++;
@@ -159,6 +183,8 @@ function scheduleFrame(frame, arrival) {
 }
 
 function onDecoded(frame) {
+  lastProgress = performance.now();
+  decoderReady = true;
   const arrival = arrivals.get(frame.timestamp);
   // Drop this and any earlier chunks that produced no output (e.g. an
   // SPS/PPS-only chunk), so a stale entry can't fake a growing backlog.
@@ -179,36 +205,66 @@ function closeDecoder() {
   codec = "";
   arrivals.clear();
   softSince = 0;
+  decoderReady = false;
+  lastRenderNote = -Infinity; // tell the page as soon as the picture is back
+  renderSince = -1;
+  clearTimeout(retryTimer); // a reset or newer resync supersedes a pending retry
+  retryTimer = 0;
   waitingForKeyFrame = true;
   waitingSince = performance.now();
 }
 
 function openDecoder(newCodec) {
   closeDecoder();
-  decoder = new VideoDecoder({
-    output: onDecoded,
+  const d = new VideoDecoder({
+    output(frame) {
+      if (decoder === d) onDecoded(frame);
+      else frame.close(); // late output of a replaced decoder
+    },
     error(e) {
-      sendLog(`decode error: ${e.message}`);
-      resync("decode error");
+      if (decoder !== d) return; // a replaced decoder
+      sendLog(`decode error: ${e.name}: ${e.message}`);
+      if (e.name === "NotSupportedError" && tuned) {
+        tuned = false; // retry without the latency/hardware hints
+        sendLog("falling back to a plain decoder config");
+      }
+      // The browser has already closed it; drop it even if resync() is
+      // rate-limited, so the next SPS reopens instead of decoding into a
+      // closed decoder.
+      closeDecoder();
+      resync("decode error", true);
     },
   });
-  decoder.configure({
-    codec: newCodec,
-    optimizeForLatency: true,
-    hardwareAcceleration: "prefer-hardware",
-  });
+  d.ondequeue = () => {
+    lastProgress = performance.now();
+    decoderReady = true;
+  };
+  d.configure(tuned
+    ? {codec: newCodec, optimizeForLatency: true, hardwareAcceleration: "prefer-hardware"}
+    : {codec: newCodec});
+  decoder = d;
   codec = newCodec;
-  sendLog(`decoder configured: ${newCodec}${SMOOTH ? " (smooth)" : ""}`);
+  sendLog(`decoder configured: ${newCodec}${tuned ? "" : " (plain)"}${SMOOTH ? " (smooth)" : ""}`);
 }
 
 // Drop everything queued and ask the page for a fresh video socket (new IDR).
-function resync(reason) {
+function resync(reason, retry = false) {
   const now = performance.now();
   // Rate-limit before closing: a resync we requested <1 s ago is still in
   // flight, so closing again here (without re-requesting) would freeze until
   // the keyframe timeout. Leave the current decoder to be replaced by the
   // pending new socket's SPS.
-  if (now - lastResync < RESYNC_INTERVAL) return;
+  if (now - lastResync < RESYNC_INTERVAL) {
+    // A decode error has already lost the decoder and the IDR it consumed:
+    // retry once the limit allows unless a new SPS has reopened a decoder.
+    if (retry && !retryTimer) {
+      retryTimer = setTimeout(() => {
+        retryTimer = 0;
+        if (!decoder) resync(reason);
+      }, RESYNC_INTERVAL - (now - lastResync));
+    }
+    return;
+  }
   lastResync = now;
   closeDecoder();
   stats.resyncs++;
@@ -217,23 +273,41 @@ function resync(reason) {
 }
 
 function checkBacklog(now) {
+  // Input queued but the decoder neither consumed nor produced anything.
+  // Skipped until the decoder first consumes input, so a slow hardware
+  // configure is not a stall (a hung one still shows up as backlog below).
+  if (decoderReady && decoder.decodeQueueSize > 0 && now - lastProgress > STALL) {
+    resync(`decoder stalled ${Math.round(now - lastProgress)} ms`);
+    return;
+  }
   const oldest = arrivals.values().next();
   if (oldest.done) {
     softSince = 0;
     return;
   }
   const age = now - oldest.value;
+  // How much stream is queued behind the oldest frame: a delayed burst that
+  // is already draining keeps this short and needs no resync.
+  const span = lastQueued - oldest.value;
+  if (age <= CLEAR_AGE || span <= CLEAR_SPAN) {
+    softSince = 0;
+    return;
+  }
+  if (span < MIN_SPAN) return;
   if (age >= HARD_AGE) {
-    resync(`backlog ${Math.round(age)} ms`);
+    resync(`backlog ${Math.round(age)} ms, span ${Math.round(span)} ms`);
   } else if (age > SOFT_AGE) {
     if (!softSince) {
       softSince = now;
-      softStartAge = age;
-    } else if (now - softSince > SOFT_GRACE && age > softStartAge) {
-      resync(`backlog growing ${Math.round(softStartAge)} -> ${Math.round(age)} ms`);
+      softStartSpan = span;
+      softStartQueue = arrivals.size;
+    } else if (now - softSince > SOFT_GRACE &&
+               (span - softStartSpan >= GROW_SPAN || arrivals.size - softStartQueue >= GROW_FRAMES)) {
+      resync(`backlog growing: span ${Math.round(softStartSpan)} -> ${Math.round(span)} ms, ` +
+             `queue ${softStartQueue} -> ${arrivals.size}`);
     }
   } else {
-    softSince = 0;
+    softSince = 0; // the grace period covers one continuous episode only
   }
 }
 
@@ -244,6 +318,7 @@ function decodeH264(data) {
     // Still screen: frames the decoder held during the pause are not a backlog.
     arrivals.clear();
     softSince = 0;
+    lastProgress = now; // nor is input a decoder kept until more arrived
   } else if (lastInput && SMOOTH) {
     updateSmoothDelay(now - lastInput);
   }
@@ -270,7 +345,9 @@ function decodeH264(data) {
   // CarPlay sends key frames rarely, so deltas are never dropped individually:
   // recovery always goes through a resync to a fresh IDR.
   timestamp += 1;
+  if (decoder.decodeQueueSize === 0) lastProgress = now; // stall clock starts with queued input
   arrivals.set(timestamp, now);
+  lastQueued = now;
   decoder.decode(new EncodedVideoChunk({type: key ? "key" : "delta", timestamp, data}));
 }
 

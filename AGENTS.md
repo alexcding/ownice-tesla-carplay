@@ -50,7 +50,7 @@ require those operations, explain the dependency and look for an approach within
   not guess.
 - Keep the package web-only: patched vendor web files, our own `player/*.js`, `webversion`, and the vendor's
   `update.sh`. No binaries.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc1` (bump `-oc2`, `-oc3`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc2` (bump `-oc3`, `-oc4`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -63,9 +63,10 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc1`) |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc2`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing |
+| `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
 | `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, cert expiry |
 | `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback |
 | `player/zq-settings.js` | in-car settings (`window.__zq`): resolution, fps, codec, playback; "Video" button in the home toolbar + its panel |
@@ -97,8 +98,14 @@ needs them. Deployment and recovery details do not grant permission to upload or
 - Keep ≤ ~3.7 MP per frame for 50+ fps (DiPlay measurements). Tesla Auto ≈ 1920×1100 ≈ 2.1 MP.
 - Never drop delta frames to "catch up" without a guaranteed IDR: CarPlay sends keyframes rarely and the picture
   freezes (happened in an early worker version).
-- Candidate work (not done): backlog recovery by reopening the video socket (DiPlay thresholds: watch > 250 ms
-  growing for 750 ms, hard at 1.5 s); opt-in "Smooth" jitter buffer (p90 arrival jitter + 20 ms, 30–200 ms).
+- Backlog recovery (`player/worker.js`) reopens the video socket (DiPlay `VideoBacklogRecovery.kt`): needs the
+  undecoded frames to span ≥ 100 ms, then hard at 1.5 s, or > 250 ms with span +100 ms / queue +4 frames over
+  750 ms. A delayed burst that is draining never resyncs. Also resyncs when the decoder holds queued input 500 ms
+  without progress while frames keep arriving (each > 120 ms input pause restarts that clock, so a wedge on a
+  sparse still screen is not caught). An unsupported decoder config falls back to a plain `{codec}` one.
+- Opt-in "Smooth" jitter buffer: p90 arrival jitter + 20 ms, 30–200 ms (arrival-timed; DiPlay uses sender PTS).
+- Wi-Fi: adapter and car network on different 5 GHz channels caused 0.6–2 s stalls in DiPlay's tests
+  (`docs/SMOOTH_WIRELESS.md`); check channels before blaming the player.
 
 ## Dev workflow
 
