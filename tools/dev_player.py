@@ -74,7 +74,7 @@ def make_handler(args):
 
     def box_native_hevc():
         """Mirror the box's own NATIVE_HEVC, but only for the codec-switch package
-        (3.0-oc7+, whose settings carry the "vmode" codec option). 3.0-oc6 also set
+        (legacy oc7+ and current 2.9.11-ocN builds, carrying "vmode"). Legacy oc6 also set
         NATIVE_HEVC yet advertises HEVC unconditionally, so its H.264/JPEG choices
         would not apply. Unreachable or unknown means False (H.264/JPEG menu)."""
         conn = http.client.HTTPSConnection(args.box, 443, context=box_ctx, timeout=3)

@@ -10,7 +10,7 @@ An opt-in native package adds CarPlay HEVC negotiation, compressed passthrough a
 JPEG/H.264/HEVC setting. HEVC playback is verified on the owner's T3 in **Mac Chrome**;
 Tesla-browser playback and broader hardware compatibility remain untested.
 
-Current default build version: **3.0-oc8**. The complete experimental package
+Current default build version: **2.9.11-oc8**. The complete experimental package
 **3.0-oc8-hevc-preview.1** is now installed on the owner's adapter, including the
 browser cleanup and rollback validation fixes. Its install log requires an explicit
 reboot, not yet performed. A fresh-session refresh passed previously through the
@@ -53,7 +53,7 @@ and bookmark it. If that gives you HD, you may not need the patch.
 
 ## Download and install
 
-Get the experimental [3.0-oc8-hevc release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/3.0-oc8-hevc).
+Get the experimental [2.9.11-oc8-hevc release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc8-hevc).
 Download the **update** ZIP, leave it zipped, connect to the adapter's Wi-Fi,
 and open `http://3.3.3.3`. Use its normal firmware update option to upload the ZIP.
 Wait for installation to finish, then reboot the adapter and reconnect the phone.
@@ -63,9 +63,13 @@ Supported base: **Ownice T3 stock 2.9.11 / build 202402031913**. Older firmware 
 as 2.9.2 and other models are unverified. Reach the supported official base through
 the normal vendor update path before applying this package.
 
-The release/tag is `3.0-oc8-hevc`; its update ZIP is the exact installed preview
-artifact and reports `3.0-oc8-hevc-preview.1`. The owner reports no regression so
-far. Long idle/return, Tesla playback and live recovery testing remain pending.
+The release, ZIP names and package version are **`2.9.11-oc8-hevc`**. This names
+the supported stock base explicitly; `oc8` identifies our custom revision. The
+previous `3.0-...` identifiers remain only in historical device/build records.
+Compared with the installed preview ZIP, the renamed update changes only the
+reported webversion; its native/browser payloads are identical. The renamed ZIP
+has not been flashed. The owner reports no regression so far with the preview;
+long idle/return, Tesla playback and live recovery testing remain pending.
 
 ## Build from stock 2.9.11
 
@@ -88,17 +92,18 @@ and ChaCha20 TLS launcher/config. Wi-Fi boot-script experiments remain opt-in.
 Experimental complete HEVC package, including the latest browser cleanup fix:
 
 ```sh
-python3 -I tools/build_patch.py --native-hevc --keep-compressed-video-focus \
-  --out build/update_tesla_hevc.zip
+python3 -I tools/build_patch.py --native-hevc --native-video-diag \
+  --keep-compressed-video-focus --version 2.9.11-oc8-hevc \
+  --out build/update_tesla_hevc_2.9.11-oc8-hevc.zip
 ```
 
 Native builds additionally need an ARM-capable Clang/LLD toolchain; see
 [the native path](docs/CARPLAY_HEVC_NATIVE_PATH.md). This package patches
 `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`, `z-tesla` and `z-link.sh`,
 and includes the browser/TLS files. It can be installed directly over the supported stock
-2.9.11 base; earlier experimental packages are not prerequisites. The focus option adds
-`-focus2` to the version. Add `--native-video-diag` for temporary delivery checkpoints
-(`-vdiag-focus2`). **Do not use `--native-only` for a first complete installation**:
+2.9.11 base; earlier experimental packages are not prerequisites. Without an explicit `--version`, the focus option adds
+`-focus2` and native diagnostics add `-vdiag`. The release command above sets a
+fixed `2.9.11-oc8-hevc` version and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
 that option deliberately preserves the installed browser/TLS/Wi-Fi files.
 
 A new browser profile defaults to H.264. In Video, select a codec, use **Apply & reload**,
@@ -114,7 +119,7 @@ After reviewing the package and explicitly authorizing the device update, join t
 box's network (or use an existing route to it) and upload the chosen package:
 
 ```sh
-tools/flash.sh update build/update_tesla_hevc.zip
+tools/flash.sh update build/update_tesla_hevc_2.9.11-oc8-hevc.zip
 tools/flash.sh status
 ```
 
@@ -142,6 +147,12 @@ The custom browser/TLS files remain. The crash watchdog handles repeated receive
 not a running receiver with a black screen. Hardware watchdog/restore recovery still needs
 validation. See [native rollback](docs/NATIVE_ROLLBACK.md).
 
+Official full-stock download: [vendor 2.9.11 ZIP](https://cdn.zjinnova.com/tesla/en/update_tesla0817.zip),
+expected MD5 **`3a743be56b60df524825cffcf45238cd`**. Download and keep a private
+copy in case the vendor link disappears. Do not rehost this archive: it contains
+private TLS keys. Our attached native restore ZIP uses the adapter's saved backup
+and needs no vendor download; a complete stock reinstall needs the official ZIP.
+
 For a complete stock reinstall, `tools/flash.sh rollback` downloads and uploads the
 MD5-checked stock 2.9.11 archive. The vendor's Check for updates also re-offers stock
 because our version has a non-vendor suffix. Preserve normal network/update access.
@@ -159,7 +170,7 @@ open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-serv
 
 | Script | Purpose |
 |---|---|
-| `tools/build_patch.py` | build the patched update package (`build/update_tesla.zip`, default version 3.0-oc8) |
+| `tools/build_patch.py` | build the patched update package (`build/update_tesla.zip`, default version 2.9.11-oc8) |
 | `tools/flash.sh` | flash / roll back over the web UI: `status`, `update [zip]`, `rollback [zip]` |
 | `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
 | `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |

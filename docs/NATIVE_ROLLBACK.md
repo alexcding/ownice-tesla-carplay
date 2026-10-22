@@ -1,5 +1,10 @@
 # Native package rollback
 
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
 Packages that replace receiver files (`libAirPlay.so`, `libScreenStream.so`, …) carry
 their own way back. Web-only packages keep the vendor installer and are unaffected.
 

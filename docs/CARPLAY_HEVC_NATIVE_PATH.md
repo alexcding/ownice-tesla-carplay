@@ -1,5 +1,10 @@
 # Existing T3 CarPlay receiver: HEVC modification targets
 
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
 **Current status, 2026-10-22:** native HEVC playback is verified on the owner's
 stock-2.9.11-derived T3 in Mac Chrome. Complete `3.0-oc8-hevc-preview.1` is now
 installed, including browser cleanup and rollback validation fixes. Its explicit
@@ -91,7 +96,7 @@ Additional inspected artifact identities:
 - `libt113_h264_decode.so`: SHA-256 `4bf873bfe084b0fcec582d489eec3969ba976c43c1af407fabb946fcddf4c487`.
 - `libt113_jpeg_encode.so`: SHA-256 `de56f3203478ac88784742e100579d36b26fbb2831174d770f6620025cf0cc62`.
 
-## Experimental patch (3.0-oc8)
+## Experimental patch (current release: 2.9.11-oc8-hevc)
 
 `tools/native_hevc.py` builds original, freestanding ARMv7 Thumb C/assembly and
 applies ten exact instruction replacements to four SHA-256-pinned files:
@@ -153,11 +158,12 @@ paths). Defaults discover the tools, including Homebrew LLVM/LLD 22 on this Mac.
 
 ```sh
 python3 -I tools/build_patch.py --firmware /path/to/stock.zip \
-  --native-hevc --out build/update_tesla_hevc_3.0-oc8.zip
+  --native-hevc --native-video-diag --keep-compressed-video-focus \
+  --version 2.9.11-oc8-hevc --out build/update_tesla_hevc_2.9.11-oc8-hevc.zip
 python3 -I tools/build_patch.py --firmware /path/to/stock.zip \
-  --native-test --out build/native_test_3.0-oc8.zip
+  --native-test --version 2.9.11-oc8-hevc --out build/native_test_2.9.11-oc8-hevc.zip
 python3 -I tools/build_patch.py --firmware /path/to/stock.zip \
-  --restore-native --out build/restore_native_3.0-oc8.zip
+  --restore-native --version 2.9.11-oc8-hevc --out build/restore_native_2.9.11-oc8-hevc.zip
 ```
 
 For independently inspectable native output and ARM tests (Python `unicorn`
@@ -204,7 +210,7 @@ that restores the stock TLS launcher, separately from native rollback.
 
 ### Deployment boundary and recovery
 
-Current `3.0-oc8` native install and restore scripts log `REBOOT REQUIRED` and
+Current `2.9.11-oc8-hevc` native install and restore scripts log `REBOOT REQUIRED` and
 perform no partial live restart. An explicit owner-triggered reboot is required
 to activate all native binaries and the supervisor/watchdog script together.
 
@@ -217,7 +223,7 @@ The HEVC package replaces `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.
 `misc/zq-native/hevc-build.json` inside the package.
 
 Rollback restores the five stock native files using the saved backup and
-`build/restore_native_3.0-oc8.zip`. Successful restore also removes the codec
+`build/restore_native_2.9.11-oc8-hevc.zip`. Successful restore also removes the codec
 flag. The custom web player remains installed and can play stock H.264;
 full stock remains available through `tools/flash.sh rollback`.
 

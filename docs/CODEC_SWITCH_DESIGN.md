@@ -1,6 +1,11 @@
 # User-selectable video codec (JPEG / H.264 / HEVC)
 
-Codec switch implemented in `3.0-oc7`; current package is `3.0-oc8`, adding
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
+Codec switch implemented in `3.0-oc7`; current release is `2.9.11-oc8-hevc`, adding
 [refresh keyframe requests](HEVC_RECONNECT_FIX.md). The codec-switch/native diagnostic
 candidate is now the complete `3.0-oc8-hevc-preview.1` package on the owner's adapter,
 including browser cleanup and rollback validation fixes. Install completion is
@@ -106,22 +111,23 @@ negotiation is unsupported; use the disconnect/apply/reconnect sequence above.
 
 ## Local validation and packages
 
-- 25 ARM-emulator tests execute the compiled handlers, stock writer (mocked file
+- 30 ARM-emulator tests execute the compiled handlers, stock writer (mocked file
   helper/libc calls), original epilogue and original video mode branch. Shared
   mocked files link mode changes to both actual advertisement hooks. Tests cover
   transitions 1→2→1→2→0, missing flags, failed persistence/open/close/unlink,
   both caller error continuations, startup inconsistency recovery,
   register/stack preservation, relocated library loading, delegate fields,
   malformed streams, AVC fallback and real HEVC decoded-pixel equivalence.
-- Seven package tests cover fresh install/restore, backup expansion, reinstall,
+- Eighteen package tests cover fresh install/restore, backup expansion, reinstall,
   changed files/corrupted backups and package contents. Successful native restore
   removes the flag and restores the five original native files.
 - `test_settings_codecs.mjs` tests settings migration, invalid modes, numeric
   selections through the actual panel's Apply handler, reconnect guidance and
   live codec stats. `test_worker_codecs.mjs` covers AVC/HEVC regression behavior.
-- All four packages build with strict patch anchors, version `3.0-oc8`:
-  `update_tesla_hevc_3.0-oc8.zip`, `native_test_3.0-oc8.zip`,
-  `restore_native_3.0-oc8.zip`, `update_tesla_3.0-oc8.zip` under ignored `build/`.
+- All four release-check packages build with strict patch anchors and explicit
+  `--version 2.9.11-oc8-hevc`: update, native-test, restore and web ZIPs under
+  ignored `build/releases/2.9.11-oc8-hevc/`. Published assets are the complete
+  HEVC update, native restore and checksums.
 
 The owner has observed codec switching and HEVC playback on the adapter in Mac
 Chrome. Controlled H.264/HEVC preference changes within an active HEVC session

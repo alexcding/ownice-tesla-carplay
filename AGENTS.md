@@ -11,6 +11,11 @@ A complete HEVC build includes browser files; use `--native-only` only when
 intentionally preserving an already installed player. Never infer deployment
 authorization from a request to build or push source.
 
+Version naming now follows the stock base: `2.9.11-oc8` (default) and
+`2.9.11-oc8-hevc` (HEVC release). Increment the `oc` suffix for future changes.
+Never reuse the stock `2.9.11` string. Historical `3.0-...` records retain their
+original identifiers; renaming a package does not flash or rename the adapter.
+
 Notes for agents and contributors working on this repo.
 
 ## Project purpose and scope
@@ -65,7 +70,7 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc8` (bump `-oc9`, `-oc10`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `2.9.11-oc8` (bump `-oc9`, `-oc10`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -78,7 +83,7 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc8`); opt-in `--native-hevc` |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `2.9.11-oc8`); opt-in `--native-hevc` |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
 | `tools/tls_patches.py` | default (opt out: `build_patch.py --no-tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |

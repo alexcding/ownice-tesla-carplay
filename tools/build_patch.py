@@ -15,10 +15,10 @@ Usage:
     python3 -I tools/build_patch.py --native-test       # + rollback machinery, receiver unchanged
     python3 -I tools/build_patch.py --native-hevc       # experimental CarPlay HEVC + native rollback
     python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
-    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc8-ac)
-    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc8-diag)
-    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc8-ht40)
-    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 3.0-oc8-aes)
+    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 2.9.11-oc8-ac)
+    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 2.9.11-oc8-diag)
+    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 2.9.11-oc8-ht40)
+    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 2.9.11-oc8-aes)
 """
 
 import argparse
@@ -46,7 +46,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "3.0-oc8"
+CUSTOM_VERSION = "2.9.11-oc8"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"

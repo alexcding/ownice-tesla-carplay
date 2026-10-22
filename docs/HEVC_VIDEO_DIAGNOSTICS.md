@@ -1,5 +1,10 @@
 # HEVC refresh delivery diagnostics
 
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
 Current status: complete `3.0-oc8-hevc-preview.1` is installed with owner authorization,
 including the browser cleanup and rollback validation fixes. The version, install
 log and served browser-file bytes are verified; the required explicit reboot has
@@ -507,3 +512,25 @@ installed update ZIP and its matching restore ZIP/checksums; internal version
 Release instructions specify the supported 2.9.11 / 202402031913 base, the normal
 web update page, explicit post-install reboot and phone codec renegotiation.
 Older firmware such as 2.9.2 remains unverified.
+
+#### Stock-based version naming and release repack
+
+At the owner's request, the default custom build version is now `2.9.11-oc8`,
+and the HEVC release/tag/package version is `2.9.11-oc8-hevc`. Active build commands
+and release links use these names; dated `3.0-...` records retain the identities
+of the artifacts actually tested or installed. The adapter was not reflashed.
+
+All four release-check ZIPs were rebuilt with explicit `--version 2.9.11-oc8-hevc`.
+A member-by-member comparison of update and restore ZIPs against the installed
+preview confirmed identical entry sets and contents except for
+`usr/z-loader/webversion`. The renamed native/browser/rollback payloads are
+therefore the same payloads already validated. Eighteen package tests and the
+player tests pass. Checksums for the renamed published assets:
+
+- Update SHA-256: `d7cf8fa3858dcd5c22ecb52cb81de7690ec3dcb1994d3e337821b407ab7b3b05`.
+- Restore SHA-256: `0ee0fb70ce09ac763aca7e50d3bc9751b9b5071ef9e52ec8e509b492fc9811fc`.
+
+Release/README rollback instructions now link directly to the pinned official
+2.9.11 download and its MD5, recommend keeping a private local copy, and explain
+that the attached native restore ZIP needs only the on-device saved backup. The
+stock archive containing private TLS keys is not mirrored.

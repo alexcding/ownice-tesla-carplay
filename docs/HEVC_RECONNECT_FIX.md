@@ -1,5 +1,10 @@
 # HEVC black after browser refresh
 
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
 **Latest status, 2026-10-22:** complete `3.0-oc8-hevc-preview.1` is installed,
 including native compressed-focus retention and the separate browser cleanup
 fix in `tools/player_patches.py`. Install completion and served browser files

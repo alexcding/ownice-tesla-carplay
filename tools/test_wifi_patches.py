@@ -350,7 +350,7 @@ def main():
 
     # 40 MHz fix: request after start, revert on failure, counter, channel change, no-ops.
     ht40_script = build(ht40=True)[wifi_patches.SOFTAP_PATH]
-    def ht40_boot(ch, fails=None, breaks=False, sec=None, hard=False, ver="3.0-oc4-ht40"):
+    def ht40_boot(ch, fails=None, breaks=False, sec=None, hard=False, ver="2.9.11-oc4-ht40"):
         root = make_root(ht40_script, conf, ch, ch, None)
         (root / "usr/z-loader/webversion").write_text(f"{ver}\n")
         if hard:
@@ -396,15 +396,15 @@ def main():
     root = ht40_boot(44, fails=2)
     time.sleep(0.5)
     check("ht40 after two failed boots: turned off for this version",
-          cc_text(root) == "" and ht40_fails(root) == "off 3.0-oc4-ht40" and "turning it off" in (root / "out").read_text(),
+          cc_text(root) == "" and ht40_fails(root) == "off 2.9.11-oc4-ht40" and "turning it off" in (root / "out").read_text(),
           f"{cc_text(root)} {ht40_fails(root)}")
     stop_watchers(root)
-    root = ht40_boot(44, fails="off 3.0-oc4-ht40")
+    root = ht40_boot(44, fails="off 2.9.11-oc4-ht40")
     time.sleep(0.5)
-    check("ht40 off: stays off on later boots", cc_text(root) == "" and ht40_fails(root) == "off 3.0-oc4-ht40",
+    check("ht40 off: stays off on later boots", cc_text(root) == "" and ht40_fails(root) == "off 2.9.11-oc4-ht40",
           f"{cc_text(root)} {ht40_fails(root)}")
     stop_watchers(root)
-    root = ht40_boot(44, fails="off 3.0-oc4-ht40", ver="3.0-oc5-ht40")
+    root = ht40_boot(44, fails="off 2.9.11-oc4-ht40", ver="2.9.11-oc5-ht40")
     check("ht40 off + new version flashed: tries again",
           wait_for(lambda: cc_text(root) == "44 1 1" and ht40_fails(root) is None), f"{cc_text(root)} {ht40_fails(root)}")
     stop_watchers(root)

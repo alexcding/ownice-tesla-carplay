@@ -1,5 +1,10 @@
 # Device reference
 
+Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
+as the default build base. Earlier `3.0-...` strings below identify historical
+builds or the installed preview, not a different supported stock-firmware base.
+See [README](../README.md) for current package names and installation commands.
+
 **Current device status, 2026-10-22:** the owner's adapter reports
 `3.0-oc8-hevc-preview.1`. The full update includes browser cleanup and rollback
 validation fixes; served browser files match the package. Its explicit reboot and
