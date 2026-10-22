@@ -1,8 +1,9 @@
 # HEVC refresh delivery diagnostics
 
-Status: owner-authorized native-only package installed; activation requires an
-owner-triggered reboot and device validation remains pending. This is an investigation build,
-not a confirmed fix for the black screen after refreshing Mac Chrome.
+Status: the initial native-only diagnostic package was installed with owner
+authorization. The subsequent focus-retention candidate has now recovered one
+controlled HEVC browser refresh on the owner's adapter in Mac Chrome, with the
+owner confirming the picture returned. Broader compatibility remains untested.
 
 ## Observed failure
 
@@ -199,3 +200,24 @@ SHA-256 matched the candidate identity above, and the ZIP contains no player
 files. No reboot was issued. Activation and HEVC refresh recovery still require
 the owner to reboot, reconnect the phone, then test a browser refresh without
 another phone reconnect until checkpoints are collected.
+
+### HEVC refresh recovery observed on Mac Chrome
+
+After selecting HEVC and reconnecting the phone, the existing Chrome window
+reported `hvc1.1.6.L120.B0`, box mode 2 and a configured decoder. The agent then
+performed one normal reload of that same window, without reconnecting the phone
+or opening another player. At socket age 8 seconds the refreshed page reported:
+
+- HEVC `hvc1.1.6.L120.B0`, 1328x658, selected/reported mode 2.
+- Eight video messages, 179,330 bytes, two parameter-set observations and two
+  keyframes; `waitingForKeyFrame` false and no decoder backlog.
+- The owner independently confirmed: browser refresh works and the picture
+  returned.
+
+This is positive on-device evidence for the focus-retention candidate, replacing
+the previous all-zero-input result for this controlled refresh. It establishes
+recovery in this Mac Chrome session, not exhaustive refresh/reconnect reliability
+or Tesla-browser compatibility. A zero instantaneous fps after the initial burst
+on a static screen does not negate the received configuration/keyframes or the
+owner's visual confirmation. Long-term behavior when the browser remains closed,
+phone energy use, other phone/OS versions and Android Auto remain unvalidated.
