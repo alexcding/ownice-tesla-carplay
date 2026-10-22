@@ -10,10 +10,16 @@
   const PROJECT = "ownice-tesla-carplay";
   const PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay";
   const KEY = "zq.settings";
-  const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false};
+  const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false, sock: "worker"};
   const AUTO_MAX_HEIGHT = 1200; // Model 3/Y screen height; S/X browser windows are smaller than 1300
+  // Auto HD: the window size scaled up (by devicePixelRatio, at least 1.5x)
+  // within DiPlay's ~3.7 MP budget for 50+ fps.
+  const HD_MIN_SCALE = 1.5;
+  const HD_MAX_PIXELS = 3.7e6;
+  const HD_MAX_HEIGHT = 1800;
   const RESOLUTIONS = [
     ["auto", "Auto (screen)"],
+    ["hd", "Auto HD"],
     ["540", "540p"],
     ["720", "720p"],
     ["900", "900p"],
@@ -38,22 +44,93 @@
   }
 
   const settings = load();
-  const target = settings.res === "auto" ? 0 : parseInt(settings.res, 10);
+  const hd = settings.res === "hd";
+  const target = settings.res === "auto" || hd ? 0 : parseInt(settings.res, 10);
+
+  // The patched bundle opens the video socket through videoSocket(). In
+  // "worker" mode the socket lives in worker.js, so frames go straight to the
+  // decoder instead of through this (busy) main thread; the bundle gets a
+  // WebSocket-like stand-in driven by {id: "ws"} notes from the worker.
+  const sockets = new Map(); // id -> stand-in
+  let nextSocket = 0;
+
+  function videoSocket(url, worker) {
+    if (settings.sock !== "worker" || !worker) return new WebSocket(url);
+    const id = ++nextSocket;
+    const sock = {
+      readyState: 0, // WebSocket.CONNECTING
+      binaryType: "arraybuffer",
+      worker,
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      send(data) {
+        if (sock.readyState === 1) worker.postMessage({id: "WsSend", sock: id, data});
+      },
+      close() {
+        if (sock.readyState >= 2) return;
+        sock.readyState = 3;
+        sockets.delete(id);
+        worker.postMessage({id: "WsClose", sock: id});
+      },
+    };
+    sockets.set(id, sock);
+    worker.postMessage({id: "WsOpen", sock: id, url});
+    return sock;
+  }
+
+  function onWorkerSocket({sock: id, ev}) {
+    const sock = sockets.get(id);
+    if (!sock) return; // closed by the page already
+    if (ev === "open") {
+      sock.readyState = 1;
+      if (sock.onopen) sock.onopen({});
+    } else if (ev === "frame") {
+      if (sock.onmessage) sock.onmessage({zq: true}); // frames arriving; data stays in the worker
+    } else if (ev === "error") {
+      if (sock.onerror) sock.onerror({});
+    } else if (ev === "close") {
+      sock.readyState = 3;
+      sockets.delete(id);
+      if (sock.onclose) sock.onclose({});
+    }
+  }
+
+  // The bundle is terminating a worker: its sockets die with it.
+  function workerGone(worker) {
+    for (const [id, sock] of sockets) {
+      if (sock.worker !== worker) continue;
+      sock.readyState = 3;
+      sockets.delete(id);
+      if (sock.onclose) sock.onclose({});
+    }
+  }
 
   window.__zq = {
     // multiplier applied by the player to the window size it requests
     get scale() {
-      const h = document.documentElement.clientHeight || window.innerHeight || 720;
-      return target ? target / h : 1;
+      const el = document.documentElement;
+      const h = el.clientHeight || window.innerHeight || 720;
+      if (target) return target / h;
+      if (!hd) return 1;
+      const w = el.clientWidth || window.innerWidth || 1280;
+      const up = Math.max(window.devicePixelRatio || 1, HD_MIN_SCALE);
+      return Math.max(1, Math.min(up, Math.sqrt(HD_MAX_PIXELS / (w * h))));
     },
-    maxh: target || AUTO_MAX_HEIGHT,
+    maxh: target || (hd ? HD_MAX_HEIGHT : AUTO_MAX_HEIGHT),
     fps: settings.fps,
     h264: settings.h264,
     smooth: settings.smooth,
     stats: null, // set once per second by the patched bundle from worker.js
+    videoSocket,
+    onWorkerSocket,
+    workerGone,
   };
 
   const CSS = `
+    /* CarPlay gets every touch: no browser pan/zoom gesture detection on the player */
+    .player-box{touch-action:none}
     /* match the vendor toolbar buttons (.settings-btn / .refresh-btn) */
     #zq-btn{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
       height:50px;margin-left:30px;padding:0 20px;border-radius:26px;border:0;cursor:pointer;
@@ -98,7 +175,7 @@
 
     const btn = document.createElement("button");
     btn.id = "zq-btn";
-    btn.textContent = `Video · ${settings.res === "auto" ? "Auto" : settings.res + "p"}`;
+    btn.textContent = `Video · ${settings.res === "auto" ? "Auto" : hd ? "Auto HD" : settings.res + "p"}`;
     const panel = document.createElement("div");
     panel.id = "zq-panel";
 
@@ -109,6 +186,7 @@
         ...group("Frame rate", "fps", [[30, "30"], [60, "60"]], draft, render),
         ...group("Video", "h264", [[true, "H.264 (HD)"], [false, "JPEG (compatible)"]], draft, render),
         ...group("Playback", "smooth", [[false, "Low latency"], [true, "Smooth"]], draft, render),
+        ...group("Video socket", "sock", [["worker", "Worker (fast)"], ["page", "Page (stock)"]], draft, render),
       );
       const apply = document.createElement("button");
       apply.className = "apply";
@@ -133,7 +211,8 @@
         lines.push(`Stream ${s.size} ${s.codec}`);
         lines.push(`${s.fps} fps shown / ${s.inFps} in · decode ${s.decodeMs} ms · queue ${s.queue}`);
         if (s.smooth) lines.push(`Smooth delay ${s.delayMs} ms · late ${s.late}`);
-        lines.push(`Resyncs ${s.resyncs}`);
+        const sock = settings.sock !== "worker" ? "page" : s.socket ? "worker" : "worker (closed)";
+        lines.push(`Resyncs ${s.resyncs} · socket ${sock}`);
       }
       lines.push(`${PROJECT} · custom, unofficial`);
       lines.push(PROJECT_URL);

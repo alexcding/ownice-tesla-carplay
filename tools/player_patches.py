@@ -29,7 +29,22 @@ BUNDLE_PATCHES = [
     ("worker can request a video-socket resync and report stats",
      'A.onmessage=R=>{R.data.id=="render"&&g.value==Se.STARTED&&(l.value=!0)}',
      'A.onmessage=R=>{const D=R.data||{};D.id=="resync"&&(cn(),lu());D.id=="stats"&&(__zq.stats=D);'
+     'D.id=="ws"&&__zq.onWorkerSocket(D);'
      'D.id=="render"&&g.value==Se.STARTED&&(l.value=!0)}', 1),
+    # Worker-owned video socket (zq-settings.js videoSocket): frames skip the main thread.
+    ("video socket opened through __zq (worker-owned unless set to Page)",
+     "n=new WebSocket(`${i7}?_t=${new Date().getTime()}`)",
+     "n=__zq.videoSocket(`${i7}?_t=${new Date().getTime()}`,A)", 1),
+    ("worker-owned socket only reports that frames arrive",
+     "n.onmessage=R=>{const Q=new Uint8Array(R.data);",
+     "n.onmessage=R=>{if(R.zq){C.value=!0;return}const Q=new Uint8Array(R.data);", 1),
+    ("a terminated worker closes its sockets",
+     "A==null||A.terminate()", "A==null||(__zq.workerGone(A),A.terminate())", 1),
+    # Hot path: runs on every touch move (Pc() logs 3 lines, plus one here).
+    ("touch mapping without per-move console logging",
+     "function ka(e){const{w:t,h:n}=Pc();te(`getViewDimensions:= ${t} X ${n}`);",
+     "function ka(e){const Pd=document.documentElement,t=en((Pd.clientWidth||document.body.clientWidth)*Ue),"
+     "n=en((Pd.clientHeight||document.body.clientHeight)*Ue);", 1),
     # Hot path: runs once per video frame.
     ("no reactive debug label per frame", ':j.value="frame..."+_++,', ":_++,", 1),
     ("transfer frame buffer to worker instead of copying",

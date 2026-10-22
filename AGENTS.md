@@ -50,7 +50,7 @@ require those operations, explain the dependency and look for an approach within
   not guess.
 - Keep the package web-only: patched vendor web files, our own `player/*.js`, `webversion`, and the vendor's
   `update.sh`. No binaries.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc2` (bump `-oc3`, `-oc4`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc3` (bump `-oc4`, `-oc5`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -63,13 +63,13 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc2`) |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc3`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
 | `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, cert expiry |
-| `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback |
-| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution, fps, codec, playback; "Video" button in the home toolbar + its panel |
+| `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback; owns the video WebSocket in "Worker" socket mode |
+| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution (incl. Auto HD), fps, codec, playback, video socket; "Video" button in the home toolbar + its panel; WebSocket stand-in for the worker-owned socket |
 
 ## Task-specific reference
 
@@ -89,6 +89,8 @@ needs them. Deployment and recovery details do not grant permission to upload or
 | entry page probes `https://<host>` and requires `ch < 1300` | stays on HTTP from `3.3.3.3` or tall screens | `INDEX_PATCHES` → `https://www.zbox.link` |
 | mousemove always sent as touch-down | hover drags CarPlay (mouse only; touch screens unaffected) | send only while `buttons&1` |
 | per-frame Vue label update, frame buffer copied to worker | main-thread overhead | removed / transferred |
+| video socket on the main thread | every frame is a main-thread task competing with touch | worker-owned socket (`__zq.videoSocket`) |
+| every touch move logs 4 `console.log` lines (`ka()` → `Pc()`); no `touch-action` on the player | slower drag handling | quiet `ka()`, `.player-box{touch-action:none}` |
 
 ## Performance notes
 
@@ -103,6 +105,11 @@ needs them. Deployment and recovery details do not grant permission to upload or
   750 ms. A delayed burst that is draining never resyncs. Also resyncs when the decoder holds queued input 500 ms
   without progress while frames keep arriving (each > 120 ms input pause restarts that clock, so a wedge on a
   sparse still screen is not caught). An unsupported decoder config falls back to a plain `{codec}` one.
+- Video socket defaults to **Worker**: `__zq.videoSocket` gives the bundle a WebSocket stand-in, `worker.js` owns
+  the real socket, and frames never touch the main thread (stock path: ~1 main-thread task per frame; worker
+  path: ~4 notes/s). "Page (stock)" in the Video panel restores the vendor path.
+- **Auto HD** (opt-in): window × max(devicePixelRatio, 1.5), capped at 3.7 MP / 1800 tall (≈ 2448×1520 on a
+  1920×1200 window). More pixels share the phone's fixed bitrate, so motion may look blockier.
 - Opt-in "Smooth" jitter buffer: p90 arrival jitter + 20 ms, 30–200 ms (arrival-timed; DiPlay uses sender PTS).
 - Wi-Fi: adapter and car network on different 5 GHz channels caused 0.6–2 s stalls in DiPlay's tests
   (`docs/SMOOTH_WIRELESS.md`); check channels before blaming the player.

@@ -2,13 +2,18 @@
 // WebCodecs, the canvas and postMessage are stubbed, so this measures only
 // our own code (NAL scan, bookkeeping, backlog checks, pacing), not decoding.
 //
-//   node tools/bench_worker.mjs [--smooth] [--frames N]
+//   node tools/bench_worker.mjs [--smooth] [--socket] [--frames N]
+//
+// --socket feeds frames through the worker-owned video socket (WsOpen) instead
+// of page "Data" messages. pageTasks counts main-thread tasks the video causes:
+// one socket message per frame in page mode, plus every worker -> page message.
 
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 
 const args = process.argv.slice(2);
 const SMOOTH = args.includes("--smooth");
+const SOCKET = args.includes("--socket");
 const FRAMES = Number(args[args.indexOf("--frames") + 1]) || 20000;
 const GOP = 300; // one IDR per 300 frames (CarPlay sends key frames rarely)
 const P_SIZE = 40_000;
@@ -84,6 +89,18 @@ class VideoFrame {
   close() { decodedOut++; }
 }
 
+let socket = null;
+class WebSocket {
+  static OPEN = 1;
+  constructor(url) {
+    this.url = url;
+    this.readyState = 1;
+    socket = this;
+  }
+  send() {}
+  close() { this.readyState = 3; }
+}
+
 let listener = null;
 let posted = 0;
 const logs = [];
@@ -102,7 +119,7 @@ const sandbox = {
   setInterval() {},
   clearTimeout() {},
   URLSearchParams, Map, Math, Blob: class {}, createImageBitmap: async () => ({}),
-  VideoDecoder, EncodedVideoChunk, console,
+  VideoDecoder, EncodedVideoChunk, WebSocket, console,
 };
 vm.createContext(sandbox);
 vm.runInContext(readFileSync(new URL("../player/worker.js", import.meta.url), "utf8"), sandbox);
@@ -113,6 +130,10 @@ function runTimers() {
 }
 
 listener({data: {id: "InitRenderer", canvas: {width: 0, height: 0, getContext: () => ctx2d}}});
+if (SOCKET) {
+  listener({data: {id: "WsOpen", sock: 1, url: "wss://zbox.link:5002/"}});
+  socket.onopen();
+}
 
 // Each frame buffer is fresh in real life (transferred), so copy outside the timed region.
 const inputs = [];
@@ -124,7 +145,8 @@ let busyP = 0n;
 for (let i = 0; i < FRAMES; i++) {
   clock = i * (1000 / 60) + (i % 7) * 1.3; // mild arrival jitter
   const t0 = process.hrtime.bigint();
-  listener({data: {id: "Data", data: inputs[i]}});
+  if (SOCKET) socket.onmessage({data: inputs[i].buffer});
+  else listener({data: {id: "Data", data: inputs[i]}});
   runTimers();
   const dt = process.hrtime.bigint() - t0;
   busy += dt;
@@ -133,12 +155,13 @@ for (let i = 0; i < FRAMES; i++) {
 }
 const idrCount = Math.ceil(FRAMES / GOP);
 console.log(JSON.stringify({
-  mode: SMOOTH ? "smooth" : "low-latency",
+  mode: (SMOOTH ? "smooth" : "low-latency") + (SOCKET ? "+socket" : ""),
   frames: FRAMES,
   usPerFrame: +(Number(busy) / FRAMES / 1e3).toFixed(2),
   usPerP: +(Number(busyP) / (FRAMES - idrCount) / 1e3).toFixed(2),
   usPerIdr: +(Number(busyIdr) / idrCount / 1e3).toFixed(2),
   decoded: decodedOut,
   posted,
+  pageTasks: posted + (SOCKET ? 0 : FRAMES),
   log: logs.filter(m => !m.startsWith("renderer")),
 }));

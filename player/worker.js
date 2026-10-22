@@ -6,6 +6,7 @@
 // Extra messages to the page (handled by the patched bundle):
 //   {id: "resync"}  reopen the video socket; a new socket starts with SPS/IDR
 //   {id: "stats"}   once per second, shown in the Video settings panel
+//   {id: "ws"}      events of a worker-owned video socket (WsOpen/WsSend/WsClose)
 //
 // Backlog recovery and smooth pacing follow DiPlay's measurements
 // (VideoBacklogRecovery.kt, docs/SMOOTH_WIRELESS.md).
@@ -53,6 +54,10 @@ let decoderReady = false; // the current decoder has consumed input (configure i
 let retryTimer = 0;
 let lastRenderNote = -Infinity;
 let renderSince = -1; // first frame drawn since the last reset
+
+let socket = null; // video WebSocket, when the page lets the worker own it
+let socketId = 0; // the page's id for it
+let lastFrameNote = -Infinity;
 let softSince = 0;
 let softStartSpan = 0;
 let softStartQueue = 0;
@@ -351,6 +356,63 @@ function decodeH264(data) {
   decoder.decode(new EncodedVideoChunk({type: key ? "key" : "delta", timestamp, data}));
 }
 
+function handleData(d) {
+  if (d.length >= 2 && d[0] === 0xff && d[1] === 0xd8) drawJPEG(d);
+  else decodeH264(d);
+}
+
+// Video socket owned by the worker ("worker" socket mode, see zq-settings.js):
+// frames go straight to the decoder instead of through the page's main
+// thread. The page only hears open/close/error and a throttled "frame" note.
+function socketNote(ev) {
+  self.postMessage({id: "ws", sock: socketId, ev});
+}
+
+function openSocket(id, url) {
+  closeSocket();
+  socketId = id;
+  lastFrameNote = -Infinity;
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    // Report it like a failed connect so the page's stand-in closes and retries.
+    sendLog(`video socket: ${e.message}`);
+    socketNote("error");
+    socketNote("close");
+    return;
+  }
+  socket = ws;
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    if (socket === ws) socketNote("open");
+  };
+  ws.onmessage = e => {
+    if (socket !== ws) return;
+    handleData(new Uint8Array(e.data));
+    const now = performance.now();
+    if (now - lastFrameNote >= RENDER_NOTE_INTERVAL) {
+      lastFrameNote = now;
+      socketNote("frame");
+    }
+  };
+  ws.onerror = () => {
+    if (socket === ws) socketNote("error");
+  };
+  ws.onclose = () => {
+    if (socket !== ws) return;
+    socket = null;
+    socketNote("close");
+  };
+}
+
+function closeSocket() {
+  if (!socket) return;
+  socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+  socket.close();
+  socket = null;
+}
+
 async function drawJPEG(data) {
   try {
     const bitmap = await createImageBitmap(new Blob([data], {type: "image/jpeg"}));
@@ -372,6 +434,7 @@ setInterval(() => {
     delayMs: SMOOTH ? Math.round(smoothDelay) : 0,
     late: stats.late,
     resyncs: stats.resyncs,
+    socket: !!socket,
     codec,
     size: canvas ? `${canvas.width}x${canvas.height}` : "",
   });
@@ -390,12 +453,18 @@ self.addEventListener("message", ({data: msg}) => {
     case "ResetRenderer":
       closeDecoder();
       break;
-    case "Data": {
-      const d = msg.data;
-      if (d.length >= 2 && d[0] === 0xff && d[1] === 0xd8) drawJPEG(d);
-      else decodeH264(d);
+    case "Data":
+      handleData(msg.data);
       break;
-    }
+    case "WsOpen":
+      openSocket(msg.sock, msg.url);
+      break;
+    case "WsSend":
+      if (socket && msg.sock === socketId && socket.readyState === WebSocket.OPEN) socket.send(msg.data);
+      break;
+    case "WsClose":
+      if (msg.sock === socketId) closeSocket();
+      break;
     case "ClearBuffer":
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
       closeDecoder();
