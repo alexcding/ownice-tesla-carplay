@@ -277,3 +277,34 @@ player files. The updater returned code 0 / success, and the version endpoint
 reported `3.0-oc8-vdiag-focus2`, previously `3.0-oc8-vdiag-focus`. No reboot was
 issued. Activation and recovery validation remain pending the owner's reboot
 and initial phone reconnect, followed by H.264 refresh and codec-transition tests.
+
+#### Runtime activation check after another transition blackout
+
+The owner clarified the sequence: the phone continued sending HEVC after the
+H.264 preference was selected, with a visible picture; changing the preference
+back to HEVC and applying then went black. The video socket was open but received
+zero messages/bytes. The keyframe submission checkpoint was `[0,1,0]`; all three
+frame checkpoints were absent. Installed version alone did not establish which
+native process image was active.
+
+A controlled probe of the existing black page tested mode-1 disconnect behavior
+without another flash, reboot, phone reconnect or player client. The existing
+control socket sent MESSAGE_IS_H264_MODE (38) with value 1. After 1.5 seconds,
+the page's existing video worker received WsClose for its current socket. The
+request checkpoint changed from `00000000 00000001 00000000` to
+`00000001 00000001 00000000`: a mode-1 browser close still sent HU focus 1.
+The probe then restored mode 2, waited, and reopened the same worker socket.
+
+The mode handler itself only persists/sets mode; its inspected path contains no
+focus update. The observed close behavior is what the mode-2-only guard permits
+and focus2 is designed to suppress. This strongly indicates the newly installed
+focus2 binary was not active in this process, rather than establishing a failure
+of the corrected guard. Owner confirmation of an adapter reboot after the focus2
+upload was requested but not received during this observation. Require an adapter
+power cycle and repeat the transition before changing the patch again. Do not
+treat the web-version marker as proof of native runtime activation.
+
+The initial worker-inspector probe stopped without changing state: the worker
+discovery URL was blank, and direct worker Runtime access subsequently timed out.
+The completed probe used the existing page's Worker messaging interface, with
+finally-handled restoration of mode and socket, instead.
