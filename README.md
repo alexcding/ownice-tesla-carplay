@@ -82,7 +82,7 @@ open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-serv
 | `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
 | `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |
 
-See [AGENTS.md](AGENTS.md) for device internals.
+See [AGENTS.md](AGENTS.md) for contribution rules and [the device reference](docs/DEVICE_REFERENCE.md) for device internals.
 
 ## License
 
