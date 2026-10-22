@@ -419,3 +419,12 @@ focus release**. Mode 2 and the existing video socket were restored. This confir
 the browser cleanup behavior changed as intended. The already-black phone
 session still supplied zero video bytes afterward; fresh-session idle/resume
 validation is pending a phone reconnect. No flash or adapter reboot was performed.
+
+After the owner returned, the existing player was receiving HEVC
+`hvc1.1.6.L120.B0` at 1328x658, with two parameter/keyframe observations and no
+decoder backlog. A normal root-page refresh then recovered without another
+phone reconnect: 184 video messages / 2,829,634 bytes by about seven seconds,
+51 fps, two parameter/keyframe observations, `waiting:false`, queue 0. The
+filtered control trace showed two acquisitions (0), INIT focus 0, and no release.
+This validates one fresh-session refresh with the cleanup patch in the proxy;
+extended idle/background return remains untested. Nothing was flashed.
