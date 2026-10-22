@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Build a patched update_tesla.zip for the Ownice T3 (zjinnova "tesla-linux" channel).
 
-The package only replaces the web entry page and the reported web version.
-No vendor binaries, keys or certificates are modified or redistributed: the
-official firmware is downloaded from the vendor CDN, verified by MD5, and the
-patch is applied at build time.
+The package only replaces web files (entry page, player page and bundle, video
+worker, settings script) and the reported web version. No vendor binaries, keys
+or certificates are modified or redistributed: the official firmware is
+downloaded from the vendor CDN, verified by MD5, and patches are applied at
+build time.
 
 Usage:
     python3 -I tools/build_patch.py                     # download + build
@@ -19,11 +20,24 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import player_patches  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+
 BASE_URL = "https://cdn.zjinnova.com/tesla/en/update_tesla0817.zip"
 BASE_MD5 = "3a743be56b60df524825cffcf45238cd"
 BASE_WEBVERSION = "2.9.11"
 
-INDEX_PATH = "usr/z-loader/zjinnova/web/index.html"
+WEB = "usr/z-loader/zjinnova/web"
+INDEX_PATH = f"{WEB}/index.html"
+PLAYER_PATH = f"{WEB}/player.html"
+BUNDLE_PATH = f"{WEB}/assets/index.0917c25d.js"  # the bundle player.html loads
+# Our own files, copied into the web root.
+LOCAL_FILES = {
+    f"{WEB}/worker.js": ROOT / "player" / "worker.js",
+    f"{WEB}{player_patches.SETTINGS_SCRIPT}": ROOT / "player" / "zq-settings.js",
+}
 WEBVERSION_PATH = "usr/z-loader/webversion"
 UPDATE_SH_PATH = "update.sh"
 
@@ -71,7 +85,7 @@ def patch_index(html):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
-    ap.add_argument("--version", default="2.10", help="web version to report (default 2.10)")
+    ap.add_argument("--version", default="3.0", help="web version to report (default 3.0)")
     ap.add_argument("--out", default="build/update_tesla.zip")
     args = ap.parse_args()
 
@@ -79,15 +93,22 @@ def main():
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
         sys.exit(f"base firmware is not webversion {BASE_WEBVERSION}")
 
-    index = patch_index(base.read(INDEX_PATH).decode())
+    files = {
+        INDEX_PATH: patch_index(base.read(INDEX_PATH).decode()),
+        PLAYER_PATH: player_patches.apply(base.read(PLAYER_PATH).decode(), player_patches.PLAYER_HTML_PATCHES),
+        BUNDLE_PATH: player_patches.apply(base.read(BUNDLE_PATH).decode(), player_patches.BUNDLE_PATCHES),
+        WEBVERSION_PATH: args.version + "\n",
+    }
+    for dest, src in LOCAL_FILES.items():
+        files[dest] = src.read_text()
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         # update.sh is the vendor's own installer: `cp ./* / -fr`
         z.writestr(zipfile.ZipInfo(UPDATE_SH_PATH), base.read(UPDATE_SH_PATH))
-        z.writestr(INDEX_PATH, index)
-        z.writestr(WEBVERSION_PATH, args.version + "\n")
+        for dest, content in files.items():
+            z.writestr(dest, content)
 
     digest = hashlib.md5(out.read_bytes()).hexdigest()
     print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {args.version})")
