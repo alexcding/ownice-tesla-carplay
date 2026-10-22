@@ -268,3 +268,12 @@ The previous focus and diagnostic packages remain available for native rollback.
 Installation and rollback require explicit authorization and a reboot. This
 candidate is built and locally reviewed/tested only; no upload or reboot has
 occurred, and mode-transition recovery remains to be validated on-device.
+
+#### Focus2 installation
+
+The owner subsequently authorized flashing `3.0-oc8-vdiag-focus2` on 2026-10-22.
+Uploaded the native-only package after verifying its SHA-256 and absence of
+player files. The updater returned code 0 / success, and the version endpoint
+reported `3.0-oc8-vdiag-focus2`, previously `3.0-oc8-vdiag-focus`. No reboot was
+issued. Activation and recovery validation remain pending the owner's reboot
+and initial phone reconnect, followed by H.264 refresh and codec-transition tests.
