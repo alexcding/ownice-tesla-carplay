@@ -8,6 +8,13 @@ See [README](../README.md) for current package names and installation commands.
 Packages that replace receiver files (`libAirPlay.so`, `libScreenStream.so`, …) carry
 their own way back. Web-only packages keep the vendor installer and are unaffected.
 
+Native HEVC builds now compose the ChaCha20 NEON patch into `z-tesla` by default,
+while retaining the original stock checksum in `native.list`. The existing stock
+backup therefore covers NEON too. A full `--restore-native` intentionally restores
+stock scalar crypto and removes HEVC. The owner's separate crypto-only rollback
+restores the exact previous HEVC executable instead; see
+[crypto release/recovery instructions](CRYPTO_RELEASES.md).
+
 ## How the box installs a package
 
 `/usr/z-loader/update.sh` (stock, not replaced) unzips the upload to `/misc/update-file`

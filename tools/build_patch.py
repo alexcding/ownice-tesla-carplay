@@ -9,6 +9,10 @@ also replace receiver files and back up stock files before installation
 redistributed: the official firmware is downloaded from the vendor CDN, verified
 by MD5, and patches are applied at build time.
 
+Every native HEVC build applies the pinned ChaCha20 NEON patch after HEVC and
+ships its build metadata/license. Browser-only builds retain installed NEON by
+not replacing z-tesla. See docs/CRYPTO_RELEASES.md before changing native code.
+
 Usage:
     python3 -I tools/build_patch.py                     # download + build
     python3 -I tools/build_patch.py --firmware path.zip # use a local copy
@@ -46,7 +50,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "2.9.11-oc8"
+CUSTOM_VERSION = "2.9.11-oc11"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -178,7 +182,9 @@ def main():
     native.add_argument("--native-test", action="store_true",
                         help="also install the native rollback machinery with unchanged receiver files")
     native.add_argument("--native-hevc", action="store_true",
-                        help="experimental native CarPlay HEVC negotiation and compressed passthrough")
+                        help="native CarPlay HEVC passthrough plus mandatory tested ChaCha20 NEON optimization")
+    ap.add_argument("--crypto-source", type=Path,
+                    help="pinned OpenSSL sources for HEVC builds (default: verified download/cache in build/crypto-source)")
     ap.add_argument("--native-video-diag", action="store_true",
                     help="with --native-hevc, expose temporary native video checkpoints (adds -vdiag)")
     ap.add_argument("--keep-compressed-video-focus", "--hevc-keep-video-focus",
@@ -203,6 +209,8 @@ def main():
                         + ("" if args.tls_chacha else "-aes")
                         + ("-vdiag" if args.native_video_diag else "")
                         + ("-focus2" if args.hevc_keep_video_focus else ""))
+        if args.native_hevc:
+            args.version += "-hevc-neon"
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -249,6 +257,9 @@ def main():
         if args.native_hevc:
             import json
             import native_hevc
+            import build_crypto_neon
+            crypto_sources = build_crypto_neon.resolve_sources(args.crypto_source)
+            crypto_payload = build_crypto_neon.compile_payload(crypto_sources, native_hevc.tool("clang", "ZQ_CLANG"))
             reports = []
             build_dir = ROOT / "build"
             build_dir.mkdir(exist_ok=True)
@@ -259,6 +270,13 @@ def main():
                         name, base.read(path), Path(directory) / (name + ".build"),
                         diagnostics=args.native_video_diag,
                         keep_video_focus=args.hevc_keep_video_focus)
+                    if name == 'z-tesla':
+                        content, crypto_report = build_crypto_neon.patch_binary(content, *crypto_payload)
+                        report['hevc_only_sha256'] = report['patched_sha256']
+                        report['patched_sha256'] = hashlib.sha256(content).hexdigest()
+                        report['crypto_neon'] = crypto_report
+                        entries[f"{NATIVE_META}/crypto-build.json"] = (json.dumps(crypto_report, indent=2)+'\n', 0o644)
+                        entries[f"{NATIVE_META}/OPENSSL-LICENSE"] = ((crypto_sources/'LICENSE').read_text(), 0o644)
                     natives[path] = (content, 0o755)
                     reports.append(report)
             entries[f"{NATIVE_META}/hevc-build.json"] = (json.dumps(reports, indent=2) + "\n", 0o644)
@@ -277,6 +295,7 @@ def main():
     if args.native_only:
         allowed = set(natives) | {UPDATE_SH_PATH, WEBVERSION_PATH,
                                   f"{NATIVE_META}/hevc-build.json",
+                                  f"{NATIVE_META}/crypto-build.json", f"{NATIVE_META}/OPENSSL-LICENSE",
                                   f"{NATIVE_META}/native.list", f"{NATIVE_META}/restore.sh"}
         entries = {path: value for path, value in entries.items() if path in allowed}
     write_zip(Path(args.out), args.version, entries)
@@ -295,6 +314,20 @@ def write_zip(out, version, entries):
         for dest in sorted(entries, key=lambda d: d != UPDATE_SH_PATH):
             content, mode = entries[dest]
             z.writestr(entry(dest, mode), content)
+
+    # Verify the actual archive bytes/modes rather than trusting staged inputs.
+    # Never leave an apparently usable package after a failed archive check.
+    try:
+        with zipfile.ZipFile(out) as verified:
+            if len(verified.infolist()) != len(entries) or set(verified.namelist()) != set(entries):
+                raise ValueError('package inventory differs from build inputs')
+            for dest, (content, mode) in entries.items():
+                expected = content.encode('utf-8') if isinstance(content, str) else content
+                if verified.read(dest) != expected or verified.getinfo(dest).external_attr >> 16 != mode:
+                    raise ValueError('package contents or permissions differ: '+dest)
+    except Exception:
+        out.unlink(missing_ok=True)
+        raise
 
     digest = hashlib.md5(out.read_bytes()).hexdigest()
     print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {version})")

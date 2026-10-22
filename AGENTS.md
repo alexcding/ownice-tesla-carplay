@@ -1,20 +1,38 @@
 # AGENTS.md
 
-Current HEVC status: full `3.0-oc8-hevc-preview.1` is installed on the owner's T3,
-including browser cleanup and rollback checks. Install completed; its required
-explicit reboot has not been performed. Previous HEVC playback/refresh validation
-was in Mac Chrome only; post-install playback, extended idle/return, actual Tesla
-playback and hardware recovery remain unvalidated. See
-[the diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
+Current device installation: `2.9.11-oc10-hevc-neon`, a crypto-only upgrade of the
+owner's HEVC receiver. The optimized copy passed a five-minute live video/audio/
+touch test and restored the original successfully; permanent install and exact
+HEVC backup were verified. Post-power-cycle activation has not been independently
+recorded. See [crypto evidence](docs/CRYPTO_RESEARCH.md) and
+[the historical HEVC diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
 Current stock-to-package build/install commands are in [README.md](README.md).
 A complete HEVC build includes browser files; use `--native-only` only when
 intentionally preserving an already installed player. Never infer deployment
 authorization from a request to build or push source.
 
-Version naming now follows the stock base: `2.9.11-oc8` (default) and
-`2.9.11-oc8-hevc` (HEVC release). Increment the `oc` suffix for future changes.
+Version naming follows the stock base: `2.9.11-oc11` is the current build default;
+native HEVC builds also append `-hevc-neon`. Increment the `oc` suffix for future changes.
 Never reuse the stock `2.9.11` string. Historical `3.0-...` records retain their
 original identifiers; renaming a package does not flash or rename the adapter.
+
+## Crypto release invariant
+
+- Every `build_patch.py --native-hevc` build, including `--native-only`, MUST
+  apply the ChaCha20 NEON patch after HEVC. Do not omit it to work around a build
+  failure. Browser/Wi-Fi-only packages must leave the installed receiver binary
+  untouched so they retain both HEVC and NEON. `--native-test` and stock restore
+  are deliberate diagnostic/recovery exceptions.
+- Keep strict stock, derived-HEVC, upstream-source and compiled-payload hashes.
+  If another native feature changes `z-tesla`, review and explicitly pin the new
+  derived base before composing NEON; never accept arbitrary hashes or silently
+  fall back to scalar crypto. Keep the original ChaCha20 routine/caller/loader
+  checks. AES, Poly1305 and cipher negotiation are separate concerns.
+- Run `python -I tools/test_crypto_release.py --firmware <stock.zip>` in the
+  crypto environment before releasing native changes. It checks all four HEVC
+  flag combinations, original HEVC mappings, final hashes and web-only
+  preservation. See [release instructions](docs/CRYPTO_RELEASES.md) for the full
+  validation commands and rollback boundaries. Never commit generated firmware.
 
 Notes for agents and contributors working on this repo.
 
@@ -70,7 +88,7 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `2.9.11-oc8` (bump `-oc9`, `-oc10`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `2.9.11-oc11` (bump `-oc12`, `-oc13`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -83,7 +101,7 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `2.9.11-oc8`); opt-in `--native-hevc` |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default `2.9.11-oc11`); `--native-hevc` includes NEON |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
 | `tools/tls_patches.py` | default (opt out: `build_patch.py --no-tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |
