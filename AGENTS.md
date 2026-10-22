@@ -54,7 +54,7 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc3` (bump `-oc4`, `-oc5`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc4` (bump `-oc5`, `-oc6`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -67,7 +67,7 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc3`) |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc4`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |

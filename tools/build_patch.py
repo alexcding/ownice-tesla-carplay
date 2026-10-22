@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Build a patched update_tesla.zip for the Ownice T3 (zjinnova "tesla-linux" channel).
 
-The package only replaces web files (entry page, player page and bundle, video
-worker, settings script) and the reported web version. No vendor binaries, keys
-or certificates are modified or redistributed: the official firmware is
-downloaded from the vendor CDN, verified by MD5, and patches are applied at
-build time.
+The default package only replaces web files (entry page, player page and bundle,
+video worker, settings script) and the reported web version. Native packages also
+replace receiver files and ship an installer that backs up the stock files first
+(see docs/NATIVE_ROLLBACK.md). No keys or certificates are modified or
+redistributed: the official firmware is downloaded from the vendor CDN, verified
+by MD5, and patches are applied at build time.
 
 Usage:
     python3 -I tools/build_patch.py                     # download + build
     python3 -I tools/build_patch.py --firmware path.zip # use a local copy
+    python3 -I tools/build_patch.py --native-test       # + rollback machinery, receiver unchanged
+    python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
 """
 
 import argparse
@@ -34,7 +37,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "3.0-oc3"
+CUSTOM_VERSION = "3.0-oc4"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -47,6 +50,57 @@ LOCAL_FILES = {
 }
 WEBVERSION_PATH = "usr/z-loader/webversion"
 UPDATE_SH_PATH = "update.sh"
+
+# Native (receiver) packages. Any package that replaces a native file ships
+# tools/native/update.sh instead of the vendor installer: it backs up the stock
+# files to /misc/zq-native/stock first, and the patched z-link.sh restores them
+# automatically if the receiver keeps crashing. See docs/NATIVE_ROLLBACK.md.
+NATIVE_DIR = ROOT / "tools" / "native"
+NATIVE_META = "misc/zq-native"  # copied to /misc/zq-native by the installer
+ZLINK_SH_PATH = "usr/z-loader/bin/z-link.sh"
+ZLINK_WATCHDOG_PATCHES = [
+    (
+        "restore the stock native files if the receiver exits 5 times within 120 s",
+        "while true;do\n"
+        "    $EXE_PATH/bin/z-link \n"
+        "    sleep 1 \n"
+        "done",
+        "ZQ=/misc/zq-native\n"
+        "fails=0\n"
+        "first=0\n"
+        "while true;do\n"
+        "    $EXE_PATH/bin/z-link \n"
+        "    if [ -f $ZQ/active ]; then\n"
+        "        now=$(date +%s)\n"
+        "        if [ $((now - first)) -gt 120 ]; then first=$now; fails=0; fi\n"
+        "        fails=$((fails + 1))\n"
+        "        if [ $fails -ge 5 ]; then\n"
+        "            echo \"$(date '+%Y-%m-%d %H:%M:%S') watchdog: z-link exited $fails times in 120 s\" \\\n"
+        "                >> /usr/z-loader/zjinnova/web/zq-native.txt\n"
+        "            sh $ZQ/restore.sh\n"
+        "            fails=0\n"
+        "        fi\n"
+        "    fi\n"
+        "    sleep 1 \n"
+        "done",
+        1,
+    ),
+]
+# Native files a test package ships unchanged, to exercise install and restore
+# on a box without changing receiver behaviour.
+NATIVE_TEST_FILES = ["usr/z-loader/lib/libScreenStream.so"]
+
+RESTORE_UPDATE_SH = """#!/bin/sh
+# Restore package: put back the stock native files saved by a native install.
+if [ -f /misc/zq-native/restore.sh ]; then
+  sh /misc/zq-native/restore.sh
+else
+  echo "$(date '+%Y-%m-%d %H:%M:%S') restore: no /misc/zq-native/restore.sh" \\
+    >> /usr/z-loader/zjinnova/web/zq-native.txt
+fi
+cp ./usr/z-loader/webversion /usr/z-loader/webversion
+sync
+"""
 
 CANONICAL_HOST = "www.zbox.link"  # the only name the box's TLS cert covers
 
@@ -95,11 +149,23 @@ def main():
     ap.add_argument("--version", default=CUSTOM_VERSION,
                     help=f"web version to report (default {CUSTOM_VERSION}); keep a non-vendor suffix")
     ap.add_argument("--out", default="build/update_tesla.zip")
+    native = ap.add_mutually_exclusive_group()
+    native.add_argument("--native-test", action="store_true",
+                        help="also install the native rollback machinery with unchanged receiver files")
+    native.add_argument("--restore-native", action="store_true",
+                        help="build a package that only restores the stock native files")
     args = ap.parse_args()
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
         sys.exit(f"base firmware is not webversion {BASE_WEBVERSION}")
+
+    if args.restore_native:
+        write_zip(Path(args.out), args.version, {
+            UPDATE_SH_PATH: (RESTORE_UPDATE_SH, 0o755),
+            WEBVERSION_PATH: (args.version + "\n", 0o644),
+        })
+        return
 
     files = {
         INDEX_PATH: patch_index(base.read(INDEX_PATH).decode()),
@@ -109,23 +175,42 @@ def main():
     }
     for dest, src in LOCAL_FILES.items():
         files[dest] = src.read_text(encoding="utf-8")
+    entries = {dest: (content, 0o644) for dest, content in files.items()}
 
+    if args.native_test:
+        # Native files: patched z-link.sh (watchdog) plus receiver files as shipped.
+        natives = {ZLINK_SH_PATH: (player_patches.apply(base.read(ZLINK_SH_PATH).decode(),
+                                                        ZLINK_WATCHDOG_PATCHES), 0o755)}
+        for path in NATIVE_TEST_FILES:
+            natives[path] = (base.read(path), 0o755)
+        listing = "".join(f"{hashlib.md5(base.read(p)).hexdigest()} {p}\n" for p in natives)
+        entries.update(natives)
+        entries[f"{NATIVE_META}/native.list"] = (listing, 0o644)
+        entries[f"{NATIVE_META}/restore.sh"] = ((NATIVE_DIR / "restore.sh").read_text(), 0o755)
+        entries[UPDATE_SH_PATH] = ((NATIVE_DIR / "update.sh").read_text(), 0o755)
+    else:
+        # update.sh is the vendor's own installer (`cp ./* / -fr`); keep it executable.
+        entries[UPDATE_SH_PATH] = (base.read(UPDATE_SH_PATH), 0o755)
+
+    write_zip(Path(args.out), args.version, entries)
+
+
+def write_zip(out, version, entries):
     def entry(name, mode):
         info = zipfile.ZipInfo(name)
         info.external_attr = mode << 16  # unix permissions; default writestr leaves 0
         info.compress_type = zipfile.ZIP_DEFLATED
         return info
 
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        # update.sh is the vendor's own installer (`cp ./* / -fr`); keep it executable.
-        z.writestr(entry(UPDATE_SH_PATH, 0o755), base.read(UPDATE_SH_PATH))
-        for dest, content in files.items():
-            z.writestr(entry(dest, 0o644), content)
+        # update.sh first, as in the vendor package
+        for dest in sorted(entries, key=lambda d: d != UPDATE_SH_PATH):
+            content, mode = entries[dest]
+            z.writestr(entry(dest, mode), content)
 
     digest = hashlib.md5(out.read_bytes()).hexdigest()
-    print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {args.version})")
+    print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {version})")
 
 
 if __name__ == "__main__":
