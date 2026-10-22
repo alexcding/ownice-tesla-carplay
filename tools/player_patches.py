@@ -23,7 +23,17 @@ BUNDLE_PATCHES = [
     ("H.264 mode (stock JPEG)", "var Mf=0;", "var Mf=__zq.h264?1:0;", 1),
     ("mouse hover is not a touch drag (only send moves while the button is held)",
      "onMousemove:t[3]||(t[3]=l=>{e.handleMouseEvt(l,!0)})",
-     "onMousemove:t[3]||(t[3]=l=>{l.buttons&1&&e.handleMouseEvt(l,!0)})", 1),
+     "onMousemove:t[3]||(t[3]=l=>{l.buttons&1&&!__zq.rawTouch&&e.handleMouseEvt(l,!0)})", 1),
+    # Raw touch (zq-settings.js): moves go out from pointerrawupdate, not from the
+    # rAF-aligned touchmove; down/up stay on the stock handlers.
+    ("touch moves come from __zq in raw touch mode",
+     "onTouchmove:t[6]||(t[6]=l=>{e.handleTouchEvt(l,!0)})",
+     "onTouchmove:t[6]||(t[6]=l=>{__zq.rawTouch?l.preventDefault():e.handleTouchEvt(l,!0)})", 1),
+    # Ra() also records the position the stock touchend reports.
+    ("__zq gets the stock touch mapping and sender",
+     "return{handleMouseEvt:wf,handleTouchEvt:yf,",
+     "return{zqTouch:__zq.touchSender(p=>ka(Ra({type:\"touchmove\",changedTouches:[p]})),(Q,ae)=>au(Q,ae,!0)),"
+     "handleMouseEvt:wf,handleTouchEvt:yf,", 1),
     ("worker gets the smooth-mode flag",
      'A=new Worker("./worker.js")', 'A=new Worker("./worker.js?smooth="+(__zq.smooth?1:0))', 1),
     ("worker can request a video-socket resync and report stats",

@@ -71,11 +71,11 @@ require those operations, explain the dependency and look for an approach within
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
 | `tools/test_wifi_patches.py` | runs the `--wifi-ac` scripts against mocked commands: `python3 -I tools/test_wifi_patches.py --firmware <zip>` |
-| `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing |
+| `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing (`--firmware <zip>` when the box already runs our build) |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
 | `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, cert expiry |
 | `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback; owns the video WebSocket in "Worker" socket mode |
-| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution (incl. Auto HD), fps, codec, playback, video socket; "Video" button in the home toolbar + its panel (stream stats, box AP Wi-Fi channel/mode/country from read-only CGIs); WebSocket stand-in for the worker-owned socket |
+| `player/zq-settings.js` | in-car settings (`window.__zq`): resolution (incl. Auto HD), fps, codec, playback, video socket, touch (raw/stock); "Video" button in the home toolbar + its panel (stream and touch stats, box AP Wi-Fi channel/mode/country from read-only CGIs); WebSocket stand-in for the worker-owned socket |
 
 ## Task-specific reference
 
@@ -104,6 +104,7 @@ label or receiver version does not establish compatibility or HEVC support.
 | per-frame Vue label update, frame buffer copied to worker | main-thread overhead | removed / transferred |
 | video socket on the main thread | every frame is a main-thread task competing with touch | worker-owned socket (`__zq.videoSocket`) |
 | every touch move logs 4 `console.log` lines (`ka()` → `Pc()`); no `touch-action` on the player | slower drag handling | quiet `ka()`, `.player-box{touch-action:none}` |
+| drag moves sent from `touchmove`, which Chrome holds until the next animation frame | moves reach CarPlay up to a frame late | "Raw" touch (default): moves from `pointerrawupdate` through the bundle's `ka(Ra())`/`au()` (`__zq.touchSender`), same-point moves skipped; down/up stay stock |
 
 ## Performance notes
 
@@ -118,6 +119,15 @@ label or receiver version does not establish compatibility or HEVC support.
   750 ms. A delayed burst that is draining never resyncs. Also resyncs when the decoder holds queued input 500 ms
   without progress while frames keep arriving (each > 120 ms input pause restarts that clock, so a wedge on a
   sparse still screen is not caught). An unsupported decoder config falls back to a plain `{codec}` one.
+- **Lost frames**: hard drags can make the box drop H.264 frames before they reach the browser (TCP to the
+  browser; 102 `frame_num` gaps in one smeared run, 0 in 1345 frames of a clean one). The decoder raises no
+  error and smears until the next IDR, which CarPlay sends rarely. `worker.js` checks `frame_num` continuity
+  (the phone's SPS forbids gaps) and resyncs on a gap: the box restarts the CarPlay screen, preferred over a
+  smear. The web control protocol has no key-frame request; `libAirPlay.so` has
+  `AirPlayReceiverSessionForceKeyFrame` (LIVI sends `forceKeyFrame`; node-carplay sends Carlinkit `frame` every
+  5 s), so a native z-tesla change could replace the restart. A focus request while focused gives no IDR.
+- Touch→frame (touch-down to the first frame after a still screen, Video panel): ~157 ms median, 70–313 ms over
+  11 taps on Mac Chrome via the dev proxy. Decode is ~2 ms, so the lag is the phone/box round trip.
 - Video socket defaults to **Worker**: `__zq.videoSocket` gives the bundle a WebSocket stand-in, `worker.js` owns
   the real socket, and frames never touch the main thread (stock path: ~1 main-thread task per frame; worker
   path: ~4 notes/s). "Page (stock)" in the Video panel restores the vendor path.

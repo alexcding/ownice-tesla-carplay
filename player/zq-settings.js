@@ -10,7 +10,7 @@
   const PROJECT = "ownice-tesla-carplay";
   const PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay";
   const KEY = "zq.settings";
-  const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false, sock: "worker"};
+  const DEFAULTS = {res: "auto", fps: 60, h264: true, smooth: false, sock: "worker", touch: "raw"};
   const AUTO_MAX_HEIGHT = 1200; // Model 3/Y screen height; S/X browser windows are smaller than 1300
   // Auto HD: the window size scaled up (by devicePixelRatio, at least 1.5x)
   // within DiPlay's ~3.7 MP budget for 50+ fps.
@@ -55,6 +55,10 @@
   let nextSocket = 0;
 
   function videoSocket(url, worker) {
+    if (worker && !worker.zqWake) {
+      worker.zqWake = true;
+      worker.addEventListener("message", onWorkerNote);
+    }
     if (settings.sock !== "worker" || !worker) return new WebSocket(url);
     const id = ++nextSocket;
     const sock = {
@@ -107,6 +111,100 @@
     }
   }
 
+  // Raw touch: Chrome holds touchmove back until the next animation frame, so
+  // the bundle's drag handler runs up to a frame late. pointerrawupdate fires
+  // as soon as the input arrives. Moves of the finger that went down on the
+  // player go out from here through the bundle's own mapping and sender
+  // (touchSender); down/up stay on the stock handlers. A move that maps to the
+  // point already sent is skipped.
+  const rawTouch = settings.touch === "raw";
+  const MOVE_EVENT = "onpointerrawupdate" in window ? "pointerrawupdate" : "pointermove";
+  const TOUCH_SCREEN = "ontouchstart" in window || navigator.maxTouchPoints > 0; // the bundle ignores mice here
+  const touchStats = {event: rawTouch ? MOVE_EVENT : "touchmove", moves: 0, sent: 0, delay: 0, since: 0};
+  // Touch-to-frame: from a touch-down to the first video frame after a still
+  // screen (worker "wake" note). The phone round trip, without decode/display.
+  const WAKE_WINDOW = 1000;
+  const wake = {down: 0, last: 0, samples: []};
+  let touchMap = null;
+  let touchSend = null;
+  let touchPointer = null;
+  let lastTouch = "";
+
+  function touchSender(map, send) {
+    touchMap = map;
+    touchSend = send;
+  }
+
+  function countMove(e) {
+    touchStats.moves++;
+    touchStats.delay += Math.max(0, performance.now() - e.timeStamp);
+  }
+
+  function onPointerDown(e) {
+    const t = e.target;
+    if (!e.isPrimary || !t.closest || !t.closest(".player-box") || t.closest("#zq-btn, #zq-panel")) return;
+    wake.down = performance.timeOrigin + performance.now();
+    if (!rawTouch) return; // stock path: only measured
+    if (e.pointerType === "mouse" && (TOUCH_SCREEN || e.button !== 0)) return;
+    touchPointer = e.pointerId;
+    lastTouch = "";
+  }
+
+  function onPointerEnd(e) {
+    if (e.pointerId === touchPointer) touchPointer = null;
+  }
+
+  function onPointerMove(e) {
+    if (e.pointerId !== touchPointer || !touchMap) return;
+    countMove(e);
+    const {x, y} = touchMap({clientX: e.clientX, clientY: e.clientY});
+    const key = `${x},${y}`;
+    if (key === lastTouch) return;
+    lastTouch = key;
+    touchStats.sent++;
+    touchSend(x, y);
+  }
+
+  function onWorkerNote(e) {
+    const d = e.data;
+    if (!d || d.id !== "wake" || !wake.down) return;
+    const ms = d.t - wake.down;
+    wake.down = 0;
+    if (ms < 0 || ms > WAKE_WINDOW) return;
+    wake.last = ms;
+    wake.samples.push(ms);
+    if (wake.samples.length > 20) wake.samples.shift();
+  }
+
+  window.addEventListener("pointerdown", onPointerDown, true);
+  if (rawTouch) {
+    window.addEventListener(MOVE_EVENT, onPointerMove, true);
+    window.addEventListener("pointerup", onPointerEnd, true);
+    window.addEventListener("pointercancel", onPointerEnd, true);
+  } else {
+    // stock path: only measured, for comparison
+    window.addEventListener("touchmove", countMove, {capture: true, passive: true});
+  }
+
+  // "Touch …" panel line; counters cover the time since the previous call.
+  function touchLine() {
+    const now = performance.now();
+    const s = touchStats;
+    const secs = s.since ? (now - s.since) / 1000 : 0;
+    const out = !secs || !s.moves ? `Touch ${s.event} · drag to measure`
+      : `Touch ${s.event} · ${Math.round(s.moves / secs)} moves/s` +
+        (rawTouch ? ` · ${Math.round(s.sent / secs)} sent/s` : "") +
+        ` · input delay ${(s.delay / s.moves).toFixed(1)} ms`;
+    Object.assign(s, {moves: 0, sent: 0, delay: 0, since: now});
+    return out;
+  }
+
+  function wakeLine() {
+    if (!wake.samples.length) return "Touch→frame · tap a still screen to measure";
+    const avg = wake.samples.reduce((a, b) => a + b, 0) / wake.samples.length;
+    return `Touch→frame ${Math.round(wake.last)} ms · avg ${Math.round(avg)} ms (${wake.samples.length})`;
+  }
+
   window.__zq = {
     // multiplier applied by the player to the window size it requests
     get scale() {
@@ -122,6 +220,10 @@
     fps: settings.fps,
     h264: settings.h264,
     smooth: settings.smooth,
+    rawTouch,
+    touchStats,
+    touchSender,
+    wake,
     stats: null, // set once per second by the patched bundle from worker.js
     videoSocket,
     onWorkerSocket,
@@ -286,6 +388,7 @@
         ...group("Video", "h264", [[true, "H.264 (HD)"], [false, "JPEG (compatible)"]], draft, render),
         ...group("Playback", "smooth", [[false, "Low latency"], [true, "Smooth"]], draft, render),
         ...group("Video socket", "sock", [["worker", "Worker (fast)"], ["page", "Page (stock)"]], draft, render),
+        ...group("Touch", "touch", [["raw", "Raw (fast)"], ["stock", "Stock"]], draft, render),
       );
       const apply = document.createElement("button");
       apply.className = "apply";
@@ -319,13 +422,13 @@
       if (!info) return;
       const s = window.__zq.stats;
       const lines = [`Window ${document.documentElement.clientWidth}×${document.documentElement.clientHeight}` +
-        ` @${window.devicePixelRatio || 1}x`, wifiLine()];
+        ` @${window.devicePixelRatio || 1}x`, wifiLine(), touchLine(), wakeLine()];
       if (s && s.codec) {
         lines.push(`Stream ${s.size} ${s.codec}`);
         lines.push(`${s.fps} fps shown / ${s.inFps} in · decode ${s.decodeMs} ms · queue ${s.queue}`);
         if (s.smooth) lines.push(`Smooth delay ${s.delayMs} ms · late ${s.late}`);
         const sock = settings.sock !== "worker" ? "page" : s.socket ? "worker" : "worker (closed)";
-        lines.push(`Resyncs ${s.resyncs} · socket ${sock}`);
+        lines.push(`Resyncs ${s.resyncs} · frame gaps ${s.gaps || 0} · socket ${sock}`);
       }
       lines.push(`${PROJECT} · custom, unofficial`);
       lines.push(PROJECT_URL);

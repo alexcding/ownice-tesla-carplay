@@ -7,6 +7,8 @@
 //   {id: "resync"}  reopen the video socket; a new socket starts with SPS/IDR
 //   {id: "stats"}   once per second, shown in the Video settings panel
 //   {id: "ws"}      events of a worker-owned video socket (WsOpen/WsSend/WsClose)
+//   {id: "wake"}    first frame after a still screen, as an epoch time (touch-to-frame
+//                   latency in the Video panel)
 //
 // Backlog recovery and smooth pacing follow DiPlay's measurements
 // (VideoBacklogRecovery.kt, docs/SMOOTH_WIRELESS.md).
@@ -71,7 +73,7 @@ let lastShow = 0;
 let lastShownStamp = -1; // timestamp of the last frame drawn, to keep display order
 let pending = 0;
 
-const stats = {inFrames: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0};
+const stats = {inFrames: 0, shown: 0, late: 0, dropped: 0, resyncs: 0, decodeMs: 0, gaps: 0, keys: 0};
 
 function sendLog(message) {
   self.postMessage(message);
@@ -81,10 +83,102 @@ function hex(b) {
   return b.toString(16).padStart(2, "0");
 }
 
+// Exp-Golomb reader over an RBSP that still has emulation-prevention bytes.
+function bitReader(data, start, end) {
+  let pos = start;
+  let bit = 0;
+  let zeros = 0;
+  function u1() {
+    if (pos >= end) throw new RangeError("short NAL");
+    if (bit === 0) {
+      if (zeros >= 2 && data[pos] === 3) {
+        pos++; // emulation prevention
+        zeros = 0;
+        if (pos >= end) throw new RangeError("short NAL");
+      }
+      zeros = data[pos] === 0 ? zeros + 1 : 0;
+    }
+    const v = (data[pos] >> (7 - bit)) & 1;
+    if (++bit === 8) {
+      bit = 0;
+      pos++;
+    }
+    return v;
+  }
+  function u(n) {
+    let v = 0;
+    for (let i = 0; i < n; i++) v = v * 2 + u1();
+    return v;
+  }
+  function ue() {
+    let lz = 0;
+    while (u1() === 0) if (++lz > 31) throw new RangeError("bad ue");
+    return (2 ** lz) - 1 + u(lz);
+  }
+  return {u1, u, ue};
+}
+
+// From the SPS: the bit width of frame_num and the colour-plane flag that
+// precedes it in slice headers, and whether the encoder may skip frame_num
+// values (gapsAllowed 1; -1 unknown). null when the SPS uses scaling lists (not parsed).
+function parseSps(data, at, end) {
+  const r = bitReader(data, at + 1, end);
+  const profile = r.u(8);
+  r.u(16); // constraint flags, level
+  r.ue(); // sps id
+  let separatePlanes = 0;
+  if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profile)) {
+    if (r.ue() === 3) separatePlanes = r.u1(); // chroma_format_idc
+    r.ue(); // bit depth luma
+    r.ue(); // bit depth chroma
+    r.u1(); // qpprime_y_zero_transform_bypass
+    if (r.u1()) return null; // seq_scaling_matrix_present
+  }
+  const frameNumBits = r.ue() + 4;
+  let gapsAllowed = -1;
+  const pocType = r.ue();
+  if (pocType === 0) r.ue();
+  if (pocType !== 1) {
+    r.ue(); // max_num_ref_frames
+    gapsAllowed = r.u1();
+  }
+  return {frameNumBits, separatePlanes, gapsAllowed};
+}
+
+// Reference-frame continuity: frame_num advances by one after each reference
+// picture, so a jump means a picture the following ones depend on never
+// arrived (the decoder keeps going and smears until the next IDR).
+// The control protocol has no key-frame request, so recovery is a socket
+// resync: the box restarts the CarPlay screen, which beats a picture smeared
+// until the phone's next IDR (CarPlay sends them rarely).
+let sps = null;
+let prevRefNum = -1;
+
+function checkFrameNum(data, at, end) {
+  if (!sps || sps.gapsAllowed !== 0) return false;
+  const r = bitReader(data, at + 1, end);
+  if (r.ue() !== 0) return false; // not the first slice of the picture
+  r.ue(); // slice_type
+  r.ue(); // pps id
+  if (sps.separatePlanes) r.u(2);
+  const num = r.u(sps.frameNumBits);
+  const type = data[at] & 0x1f;
+  const isRef = (data[at] & 0x60) !== 0;
+  if (type !== 5 && prevRefNum >= 0 && num !== prevRefNum && num !== (prevRefNum + 1) % (2 ** sps.frameNumBits)) {
+    stats.gaps++;
+    sendLog(`frame_num gap: ${prevRefNum} -> ${num}`);
+    prevRefNum = -1;
+    return true;
+  }
+  if (type === 5 || isRef) prevRefNum = num;
+  return false;
+}
+
 // Walks the Annex B NAL headers up to the first slice. Parameter sets precede
 // the picture data, so the slice payload (most of the buffer) is never scanned.
 function inspect(data) {
   let key = false;
+  let gap = false;
   let spsCodec = "";
   const n = data.length;
   for (let i = 0; i + 3 < n; i++) {
@@ -97,13 +191,23 @@ function inspect(data) {
     if (type === 7 && at + 3 < n) {
       key = true;
       spsCodec = `avc1.${hex(data[at + 1])}${hex(data[at + 2])}${hex(data[at + 3])}`;
+      try {
+        sps = parseSps(data, at, Math.min(n, at + 64));
+      } catch (e) {
+        sps = null;
+      }
     } else if (type >= 1 && type <= 5) {
       if (type === 5) key = true;
+      try {
+        gap = checkFrameNum(data, at, Math.min(n, at + 32));
+      } catch (e) {
+        // header cut short: skip the check for this frame
+      }
       break; // slice data follows
     }
     i = at;
   }
-  return {key, spsCodec};
+  return {key, gap, spsCodec};
 }
 
 function draw(source, w, h) {
@@ -217,6 +321,7 @@ function closeDecoder() {
   retryTimer = 0;
   waitingForKeyFrame = true;
   waitingSince = performance.now();
+  prevRefNum = -1; // the next picture used is an IDR
 }
 
 function openDecoder(newCodec) {
@@ -320,6 +425,7 @@ function decodeH264(data) {
   const now = performance.now();
   stats.inFrames++;
   if (lastInput && now - lastInput > PAUSE_GAP) {
+    self.postMessage({id: "wake", t: performance.timeOrigin + now});
     // Still screen: frames the decoder held during the pause are not a backlog.
     arrivals.clear();
     softSince = 0;
@@ -329,8 +435,19 @@ function decodeH264(data) {
   }
   lastInput = now;
 
-  const {key, spsCodec} = inspect(data);
+  const {key, gap, spsCodec} = inspect(data);
+  if (key) stats.keys++;
   if (spsCodec && spsCodec !== codec) openDecoder(spsCodec);
+  // A reference picture never arrived: hold the last good picture until the
+  // resync's fresh IDR instead of decoding smears.
+  if (gap && !waitingForKeyFrame) {
+    resync("frame_num gap");
+    waitingForKeyFrame = true;
+    // Rate-limited (the last resync's IDR already arrived): the key-frame
+    // timeout below resyncs again as soon as the limit allows.
+    waitingSince = lastResync === now ? now : lastResync + RESYNC_INTERVAL - KEYFRAME_TIMEOUT;
+    return;
+  }
 
   if (waitingForKeyFrame) {
     if (!key || !decoder) {
@@ -434,6 +551,8 @@ setInterval(() => {
     delayMs: SMOOTH ? Math.round(smoothDelay) : 0,
     late: stats.late,
     resyncs: stats.resyncs,
+    gaps: stats.gaps,
+    keys: stats.keys,
     socket: !!socket,
     codec,
     size: canvas ? `${canvas.width}x${canvas.height}` : "",
