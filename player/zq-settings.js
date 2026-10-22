@@ -485,7 +485,7 @@
       );
       const apply = document.createElement("button");
       apply.className = "apply";
-      apply.textContent = "Apply";
+      apply.textContent = "Apply & reload";
       apply.onclick = () => {
         save(draft);
         location.reload();
