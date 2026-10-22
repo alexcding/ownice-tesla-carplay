@@ -10,6 +10,10 @@ the home toolbar).
     python3 -I tools/dev_player.py
 
 Then open the printed Chrome command. Ctrl-C to stop.
+
+A box already running our firmware serves a patched player, which the stock
+patch anchors no longer match: pass --firmware (a local copy of the official
+update zip, or "cdn" to download it) to patch the stock player instead.
 """
 
 import argparse
@@ -22,6 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_patch  # noqa: E402
 import player_patches  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,8 +58,19 @@ def ensure_cert():
     return crt, key
 
 
+def stock_player(firmware):
+    """Stock player.html and bundle from the official update zip, by served path."""
+    if not firmware:
+        return {}
+    z = build_patch.fetch_base(None if firmware == "cdn" else firmware)
+    web = build_patch.WEB
+    return {"/player.html": z.read(build_patch.PLAYER_PATH),
+            build_patch.BUNDLE_PATH[len(web):]: z.read(build_patch.BUNDLE_PATH)}
+
+
 def make_handler(args):
     box_ctx = ssl._create_unverified_context()
+    stock = stock_player(args.firmware)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -94,6 +110,8 @@ def make_handler(args):
             finally:
                 conn.close()
 
+            if path in stock:
+                data = stock[path]
             if path == "/player.html":
                 patches = player_patches.PLAYER_HTML_PATCHES
             elif re.fullmatch(r"/assets/index\.[0-9a-f]+\.js", path):
@@ -114,6 +132,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--box", default="3.3.3.3")
     ap.add_argument("--port", type=int, default=8443)
+    ap.add_argument("--firmware", help='official update zip (or "cdn") to patch the stock player from')
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
