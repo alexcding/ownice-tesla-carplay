@@ -1,7 +1,18 @@
 # ownice-tesla-carplay
 
-Community patch for the **Ownice T3 / zjinnova "T-Box"** wireless CarPlay / Android Auto adapter for Tesla.
-It fixes the box getting stuck in low-resolution **compatible mode** in the Tesla browser.
+Community revival project for the discontinued **Ownice T3 / zjinnova "T-Box"** wireless
+CarPlay / Android Auto adapter for Tesla. We aim to improve the overall adapter experience:
+Wi-Fi and Bluetooth reliability, phone compatibility, native services, video and audio quality,
+latency, browser playback, diagnostics, and maintainable updates.
+
+The current update package improves the browser player, including the low-resolution
+**compatible mode** problem. Research also covers native receiver updates and HEVC. Findings and
+fixes should be reproducible and explicit about supported firmware and hardware so the community
+can keep existing adapters useful. Proposed capabilities are not claims of working features.
+
+See the [firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) for Wi-Fi, CarPlay,
+Android Auto, audio/video, service reliability and update work, and the
+[HEVC research](docs/HEVC_RESEARCH.md) for receiver and browser codec requirements.
 
 > Unofficial. Not affiliated with Ownice or zjinnova. Flashing modified firmware is at your own risk.
 

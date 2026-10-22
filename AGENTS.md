@@ -4,28 +4,31 @@ Notes for agents and contributors working on this repo.
 
 ## Project purpose and scope
 
-This project improves the browser-based CarPlay player on an Ownice T3 adapter for use in a Tesla
-browser. The intended target is the owner's adapter, or a device they are authorized to modify.
+This project is a community revival of the Ownice T3 adapter for use in a Tesla browser. Its scope
+covers the whole adapter experience: Wi-Fi and Bluetooth connectivity, CarPlay and Android Auto,
+native receiver and vendor services, video and audio quality, latency, browser playback, settings,
+diagnostics, updates, and recovery. The intended target is the owner's adapter, or a device they
+are authorized to modify.
 Ownership does not authorize actions against vendor infrastructure or other people's devices.
 
-The adapter is discontinued. This is a community
-revival effort to make existing hardware useful again through better browser compatibility, video
-quality, and reliability, reducing the need to replace a working adapter. This purpose does not
+The adapter is discontinued. The aim is to extend the useful life of existing hardware and share
+reproducible research, maintainable improvements, and compatibility findings with other owners.
+Browser patches are the starting point, not a limit on the project. This purpose does not
 expand the authorization boundaries below.
 
-Here, "custom firmware" means a **web-only update package**: HTML/JavaScript player changes and a
-custom web-version string, packaged with the vendor's existing update script. Current work concerns
-video quality, WebCodecs decoding, latency, resolution, input handling, and player settings. It does
-not modify Tesla vehicle firmware, the adapter's bootloader, kernel, or vendor executables.
+The current custom update package contains HTML/JavaScript player changes and a custom web-version
+string, packaged with the vendor's existing update script. Work may research, develop, and validate
+native service improvements and compatible receiver updates as well as web changes. It does not
+modify Tesla vehicle firmware or the adapter's bootloader or kernel.
 
 Device internals and recovery observations below are reference evidence, not instructions to attempt
 privileged access or bypass protections. Password guessing, authentication or signature bypasses,
 and use or disclosure of bundled private keys are outside this project's scope. If a task appears to
-require those operations, explain the dependency and look for an approach within the web-only scope.
+require those operations, explain the dependency and look for an approach within these boundaries.
 
 ## Working on a task
 
-- State the concrete player behavior to improve and inspect the relevant source files first.
+- State the concrete adapter behavior to improve and inspect the relevant source files or firmware artifacts first.
   Describe the actual operation precisely; retain security-relevant facts and uncertainties.
 - Keep source analysis, code edits, local validation, package building, and device deployment as
   distinct steps. A request to edit or build does not authorize an upload or reboot.
@@ -35,6 +38,9 @@ require those operations, explain the dependency and look for an approach within
   and rollback path. Upload or reboot only with the owner's explicit go-ahead, as required below.
 - Do not print private keys or paste complete vendor archive contents into model context, logs, or
   reports. Inspect only the files needed for the task and keep vendor artifacts out of Git.
+- For community-facing findings, record the firmware identity, affected subsystem, evidence,
+  expected benefit, compatibility limits, validation status, and recovery implications. Distinguish
+  observations from hypotheses and fixes from proposals; do not assume another owner's board matches.
 - Do not treat these notes as a way to disable model safeguards. If a tool flags a task, report the
   actual operation and available diagnostic text; do not infer a cause from the warning alone.
 
@@ -48,8 +54,6 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- Keep the package web-only: patched vendor web files, our own `player/*.js`, `webversion`, and the vendor's
-  `update.sh`. No binaries.
 - **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc3` (bump `-oc4`, `-oc5`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
@@ -76,6 +80,10 @@ require those operations, explain the dependency and look for an approach within
 [Device reference](docs/DEVICE_REFERENCE.md) contains architecture, ports, control protocol, CGI API,
 update flow, recovery limitations, and historical status. Read the relevant sections when the task
 needs them. Deployment and recovery details do not grant permission to upload or reboot.
+
+[Firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) maps Wi-Fi, phone projection,
+audio/video, native services, updates and diagnostics opportunities to firmware evidence and
+validation requirements. [HEVC research](docs/HEVC_RESEARCH.md) records codec-specific findings.
 
 ## Why stock 2.9.11 looks bad
 
