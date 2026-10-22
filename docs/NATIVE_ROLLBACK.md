@@ -44,17 +44,20 @@ requires that reboot.
 `restore.sh` skips files already identical to the backup and clears
 `/misc/zq-native/active` only when every file is stock again. Since 3.0-oc7,
 successful restore also removes `/data/local/tmp/zq_hevc` (the codec-selection flag)
-and the codec diagnostic `/zq-codec.txt`.
+and the codec diagnostic `/zq-codec.txt`. Current restore also clears the four
+`/zq-video-{request,phone,sender,output}.txt` delivery checkpoints.
 
 ## Validation status
 
 - Local simulation (scratch copy of the stock tree, macOS `sh`): install, restore,
   reinstall, refusal on a non-stock file, mid-install failure, and the crash watchdog,
   25 checks passing. The box runs BusyBox `ash`; the scripts use POSIX features only,
-  but have not yet run under BusyBox.
-- Not yet run on a box. First on-device step: `build_patch.py --native-test` ships the
-  rollback machinery with receiver files unchanged, then `--restore-native`.
-- Seven additional reproducible package tests (`tools/test_native_packages.py`)
+  but that local simulation did not run under BusyBox. Installation has since
+  run on the owner's adapter; live restore/watchdog checks remain pending.
+- Native HEVC installation and stock-backup creation have run on the owner's box.
+  Live restore and crash-watchdog recovery have not been demonstrated. A separate
+  `--native-test` / `--restore-native` device exercise remains a useful recovery check.
+- Eight reproducible package tests (`tools/test_native_packages.py`)
   cover HEVC install/restore, backup expansion, changed native files, corrupted
   backups, reinstall and package contents, including removal of the codec flag. The restore package now propagates restore errors.
 - Limits: the watchdog sees only crashes. A receiver that hangs or that the iPhone

@@ -1,5 +1,11 @@
 # CarPlay receiver update candidates
 
+**Follow-up status, 2026-10-22:** no third-party receiver candidate below is
+a verified drop-in T3 upgrade. Separately, this repository's patch to the existing
+T3 receiver now provides observed HEVC playback in Mac Chrome on the owner's
+adapter. See [the native path](CARPLAY_HEVC_NATIVE_PATH.md) and
+[diagnostics](HEVC_VIDEO_DIAGNOSTICS.md); Tesla compatibility remains untested.
+
 Follow-up research: 2026-10-21, America/Toronto. These results come from public
 release metadata, downloaded artifacts and selected source files. Nothing was
 installed or executed on an adapter. Vendor artifacts stay outside Git at

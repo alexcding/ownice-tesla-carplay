@@ -1,5 +1,14 @@
 # HEVC CarPlay feasibility on Ownice T3
 
+**Current status, 2026-10-22:** the experimental patch to the existing T3 receiver
+now negotiates HEVC and forwards it to Mac Chrome on the owner's adapter. The live
+decoder reports `hvc1.1.6.L120.B0` at 1328x658. This supersedes the unresolved
+negotiation/forwarding statements in the original research below; those sections
+retain the initial stock-firmware evidence. Tesla-browser decode, broader board
+compatibility, long idle/return and live recovery remain unverified. See
+[the native path](CARPLAY_HEVC_NATIVE_PATH.md), [codec switch](CODEC_SWITCH_DESIGN.md)
+and [latest diagnostic record](HEVC_VIDEO_DIAGNOSTICS.md).
+
 Research date: 2026-10-21 (America/Toronto). This is offline firmware analysis and
 public-source research, not a successful HEVC test on the adapter or Tesla.
 

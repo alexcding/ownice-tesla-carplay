@@ -1,5 +1,12 @@
 # Device reference
 
+**Current device status, 2026-10-22:** the owner's adapter reports
+`3.0-oc8-vdiag-focus2`. HEVC 1328x658 playback and controlled refresh are verified
+in Mac Chrome. The latest browser cleanup fix is on the development proxy only;
+long idle/return, Tesla playback and live restore/watchdog recovery remain pending.
+See [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md) for package identities and observations.
+Historical version entries below describe earlier installations.
+
 Technical observations and historical device status for the Ownice T3 adapter.
 Read the sections relevant to the current task; follow the scope and authorization rules in
 [AGENTS.md](../AGENTS.md). Historical observations are not a fresh device status check.
@@ -79,14 +86,17 @@ nothing and took down the server that answered it, port 80 once and port 443 onc
 3. `/usr/z-loader/update.sh` unzips to `/misc/update-file` and runs the package's `update.sh` (stock: `cp ./* / -fr`).
    LED on PB6 blinks meanwhile.
 4. No signature check in the shell path; `z-connman` has `systemVerify`/`rsaDecryptOk` symbols — whether uploads are
-   verified is **unconfirmed** (nothing has been flashed yet).
+   verified internally remains **unconfirmed**. Owner-authorized custom package uploads
+   have succeeded; that observation does not establish the internal verification mechanism.
 
 ## Recovery / flashing channels
 
 - **`tools/flash.sh` is the deploy + rollback tool.** `update` uploads `build/update_tesla.zip`; `rollback`
   downloads (MD5-checked) and flashes stock 2.9.11; `status` prints the version. It POSTs `file` (as `upload.zip`)
   plus `md5` to `/cgi-bin/upload.cgi` — exactly what the box's update page does — then waits until `checkver` reports the new version.
-  A `{"code": 0}` response means the box accepted it and installs on its own.
+  A `{"code": 0}` response means upload acceptance; confirm install logs/version separately.
+  Native packages require an explicit reboot after installation; the version marker alone
+  does not establish which native generation is running.
 - **Web UI at `http://3.3.3.3` is the underlying path.** The box runs `/usr/z-loader/update.sh` after upload. Our
   packages never touch `update-web`, `z-connman` or `update.sh`, so this path survives a bad package. Since
   `3.0-oc5` every package also ships `usr/z-loader/bin/z-tesla-sh.sh` (ChaCha20 TLS config for z-tesla only, or the

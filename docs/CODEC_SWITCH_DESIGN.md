@@ -1,10 +1,12 @@
 # User-selectable video codec (JPEG / H.264 / HEVC)
 
 Codec switch implemented in `3.0-oc7`; current package is `3.0-oc8`, adding
-[refresh keyframe requests](HEVC_RECONNECT_FIX.md). Not deployed. Native installation and restore
+[refresh keyframe requests](HEVC_RECONNECT_FIX.md). The codec-switch/native diagnostic
+candidate `3.0-oc8-vdiag-focus2` is installed on the owner's adapter. The latest browser
+cleanup fix remains proxy-only; see [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md). Native installation and restore
 require an explicit owner-triggered reboot before use. The earlier `3.0-oc6` native
 package advertises HEVC unconditionally and does not implement this switch.
-This targets only Ownice T3 firmware 2.9.11 / build 202402031913 and the three
+This targets only Ownice T3 firmware 2.9.11 / build 202402031913 and the four
 SHA-256 identities pinned by `tools/native_hevc.py`.
 
 ## Owner-facing behavior
@@ -119,15 +121,17 @@ negotiation is unsupported; use the disconnect/apply/reconnect sequence above.
   `update_tesla_hevc_3.0-oc8.zip`, `native_test_3.0-oc8.zip`,
   `restore_native_3.0-oc8.zip`, `update_tesla_3.0-oc8.zip` under ignored `build/`.
 
-The switch has **not been validated on the adapter**. Earlier live HEVC playback
-was observed in Mac Chrome with the unconditional patch; no Tesla browser was
-used in that validation. Filesystem permissions/lifetime, phone reconnection,
-actual H.264/JPEG restoration and watchdog recovery still need device checks.
+The owner has observed codec switching and HEVC playback on the adapter in Mac
+Chrome. Controlled H.264/HEVC preference changes within an active HEVC session
+also recovered after reload, while the actual decoder remained HEVC until phone
+reconnection, as designed. This does not establish a pure H.264-session refresh,
+JPEG restoration, watchdog recovery, extended idle reliability or Tesla playback.
+The latest diagnostic record distinguishes completed observations from pending checks.
 
 ## Deployment and rollback
 
-No upload, reboot, phone reconnect or player/proxy restart was performed for
-this implementation. Deployment requires the owner's explicit approval under
+The initial implementation was validated offline; later owner-authorized installs,
+reboot and Mac Chrome tests are recorded in the diagnostic report. Deployment requires the owner's explicit approval under
 [AGENTS.md](../AGENTS.md).
 
 The HEVC package replaces `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`,

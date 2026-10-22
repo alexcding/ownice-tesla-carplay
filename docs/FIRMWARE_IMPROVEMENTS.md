@@ -1,5 +1,12 @@
 # Ownice T3 firmware improvement survey
 
+**Follow-up status, 2026-10-22:** the original survey below describes stock
+firmware. Native HEVC negotiation/forwarding and browser HEVC decode are now
+implemented and observed on the owner's T3 in Mac Chrome. Native backups/install
+are exercised; live restore/watchdog, long idle/return and Tesla playback remain
+pending. See [diagnostics](HEVC_VIDEO_DIAGNOSTICS.md) and
+[native rollback](NATIVE_ROLLBACK.md) for current validation.
+
 This community project covers the whole adapter: Wi-Fi, Bluetooth, CarPlay,
 Android Auto, audio/video, native services, browser playback, diagnostics,
 updates and recovery. The goal is to keep existing hardware useful and produce

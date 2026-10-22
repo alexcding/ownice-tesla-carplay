@@ -1,9 +1,12 @@
 # HEVC refresh delivery diagnostics
 
-Status: the initial native-only diagnostic package was installed with owner
-authorization. The subsequent focus-retention candidate has now recovered one
-controlled HEVC browser refresh on the owner's adapter in Mac Chrome, with the
-owner confirming the picture returned. Broader compatibility remains untested.
+Current status: native `3.0-oc8-vdiag-focus2` is installed with owner authorization.
+HEVC playback and controlled refresh are verified on the owner's T3 in Mac Chrome.
+A separate browser cleanup focus-release fix is now running through the dev proxy
+and passed one fresh-session refresh; it has not been flashed. Extended idle/return,
+Tesla playback and live restore/watchdog recovery remain unvalidated. The record
+below is chronological; later control-message captures correct earlier activation
+inferences.
 
 ## Observed failure
 

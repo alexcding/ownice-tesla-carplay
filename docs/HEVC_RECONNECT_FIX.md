@@ -1,5 +1,14 @@
 # HEVC black after browser refresh
 
+**Latest status, 2026-10-22:** the installed `3.0-oc8-vdiag-focus2` candidate
+retains native focus on compressed socket close. A separate browser cleanup
+release was subsequently captured and suppressed for compressed modes in
+`tools/player_patches.py`. That latest fix is running in the Mac proxy only.
+A fresh-session HEVC refresh passed; the already-black session required a phone
+reconnect, and extended idle/return remains pending. See the
+[diagnostic record](HEVC_VIDEO_DIAGNOSTICS.md) for chronology and corrected
+inferences. The original keyframe hook alone was insufficient.
+
 Observed on Mac Chrome through the dev proxy: refreshing during HEVC playback
 can leave the player black with `codec:""`. H.264 recovers in the owner's tests.
 No Tesla browser was involved in this observation. An empty codec establishes

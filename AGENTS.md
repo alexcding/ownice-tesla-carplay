@@ -1,5 +1,15 @@
 # AGENTS.md
 
+Current HEVC status: native `3.0-oc8-vdiag-focus2` is installed on the owner's T3;
+HEVC playback and controlled refresh are verified in Mac Chrome only. The latest
+compressed-video cleanup fix is served by the dev proxy, not yet flashed. Extended
+idle/return, actual Tesla playback and hardware recovery remain unvalidated. See
+[the diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
+Current stock-to-package build/install commands are in [README.md](README.md).
+A complete HEVC build includes browser files; use `--native-only` only when
+intentionally preserving an already installed player. Never infer deployment
+authorization from a request to build or push source.
+
 Notes for agents and contributors working on this repo.
 
 ## Project purpose and scope
@@ -75,7 +85,7 @@ require those operations, explain the dependency and look for an approach within
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing (`--firmware <zip>` when the box already runs our build) |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
 | `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, cert expiry |
-| `player/worker.js` | our video worker: H.264 via WebCodecs (low latency), JPEG fallback; owns the video WebSocket in "Worker" socket mode |
+| `player/worker.js` | our video worker: H.264/HEVC via WebCodecs (low latency), JPEG fallback; owns the video WebSocket in "Worker" socket mode |
 | `player/zq-settings.js` | in-car settings (`window.__zq`): resolution (incl. Auto HD), fps, codec, playback, video socket, touch (raw/stock); "Video" button in the home toolbar + its panel (stream and touch stats, box AP Wi-Fi channel/mode/country from read-only CGIs); WebSocket stand-in for the worker-owned socket |
 
 ## Task-specific reference
@@ -95,7 +105,7 @@ label or receiver version does not establish compatibility or HEVC support.
 
 | Stock behaviour | Effect | Our patch |
 |---|---|---|
-| `is_h264_mode` hard-coded 0; `worker.js` H.264 code commented out | box re-encodes every frame to JPEG on the T113: artifacts, latency | `Mf=__zq.h264`, new `player/worker.js` |
+| `is_h264_mode` hard-coded 0; `worker.js` H.264 code commented out | box re-encodes every frame to JPEG on the T113: artifacts, latency | `Mf=__zq.mode|0` (0 JPEG / 1 H.264 / 2 HEVC), new `player/worker.js` |
 | `Ue=.8` on every path | requests 80% of the window, then upscales | `Ue=__zq.scale` |
 | height cap 720 | at most 720p | `__zq.maxh` (Auto: 1200) |
 | `fps:30` | | `__zq.fps` (default 60) |
