@@ -5,8 +5,10 @@
 #   tools/flash.sh update [zip]           # upload build/update_tesla.zip (or <zip>)
 #   tools/flash.sh rollback [zip]         # restore stock 2.9.11 (downloads if needed)
 #
-# The box installs on a `{"code": 0}` response and reboots itself. The script
-# then waits for it to come back and prints the new version.
+# The box installs on a `{"code": 0}` response. The script then waits until it
+# reports the new version (webversion is read live). Web files apply at once;
+# boot-script changes (etc/*) only run after a power cycle: in 2026-10-22 tests
+# the box did not reboot after an update.
 #
 # Env: BOX=3.3.3.3 (box IP). Requires curl, md5/md5sum, unzip.
 set -eu
@@ -30,10 +32,10 @@ version() {
   CURL -m 5 "http://$BOX/cgi-bin/checkver.cgi?t=$(date +%s)" 2>/dev/null || echo '(no response)'
 }
 
-# Wait until the box reboots and reports the expected version (or time out).
+# Wait until the box reports the expected version (or time out).
 wait_for_box() {
   want="$1"
-  echo "waiting for the box to reboot and report $want ..."
+  echo "waiting for the box to install and report $want ..."
   i=0
   while [ "$i" -lt 60 ]; do
     i=$((i + 1))

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Build a patched update_tesla.zip for the Ownice T3 (zjinnova "tesla-linux" channel).
 
-The package only replaces web files (entry page, player page and bundle, video
-worker, settings script) and the reported web version. No vendor binaries, keys
-or certificates are modified or redistributed: the official firmware is
-downloaded from the vendor CDN, verified by MD5, and patches are applied at
-build time.
+By default the package only replaces web files (entry page, player page and
+bundle, video worker, settings script) and the reported web version. --wifi-ac
+also patches two soft-AP boot scripts for 802.11ac 80 MHz; --wifi-diag adds
+read-only Wi-Fi diagnostics at /zq-wifi.txt (both in tools/wifi_patches.py).
+No vendor binaries, keys or certificates are modified or redistributed: the
+official firmware is downloaded from the vendor CDN, verified by MD5, and patches
+are applied at build time.
 
 Usage:
     python3 -I tools/build_patch.py                     # download + build
     python3 -I tools/build_patch.py --firmware path.zip # use a local copy
+    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc4-ac)
+    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc4-diag)
+    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc4-ht40)
 """
 
 import argparse
@@ -22,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import player_patches  # noqa: E402
+import wifi_patches  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -34,7 +40,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "3.0-oc3"
+CUSTOM_VERSION = "3.0-oc4"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -92,10 +98,24 @@ def patch_index(html):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
-    ap.add_argument("--version", default=CUSTOM_VERSION,
-                    help=f"web version to report (default {CUSTOM_VERSION}); keep a non-vendor suffix")
+    ap.add_argument("--version",
+                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option); "
+                         "keep a non-vendor suffix")
+    ap.add_argument("--wifi-ac", action="store_true",
+                    help="also patch the soft-AP boot scripts for 802.11ac 80 MHz")
+    ap.add_argument("--wifi-diag", action="store_true",
+                    help="also write read-only Wi-Fi diagnostics to /zq-wifi.txt after boot")
+    ap.add_argument("--wifi-ht40", action="store_true",
+                    help="run the soft AP at 40 MHz (re-requested from the driver after start-up, with fallback)")
+    ap.add_argument("--wifi-bw40-test", action="store_true",
+                    help="one-time experiment: ask the AP driver for 40 MHz at runtime (implies --wifi-diag)")
     ap.add_argument("--out", default="build/update_tesla.zip")
     args = ap.parse_args()
+    if args.wifi_bw40_test:
+        args.wifi_diag = True  # the experiment reports through the diagnostics file
+    if args.version is None:
+        args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
+                        + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else ""))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -109,6 +129,10 @@ def main():
     }
     for dest, src in LOCAL_FILES.items():
         files[dest] = src.read_text(encoding="utf-8")
+    scripts = {}  # boot scripts, installed executable
+    for path, patches in wifi_patches.patches(ac=args.wifi_ac, diag=args.wifi_diag,
+                                              bw40=args.wifi_bw40_test, ht40=args.wifi_ht40).items():
+        scripts[path] = player_patches.apply(base.read(path).decode(), patches)
 
     def entry(name, mode):
         info = zipfile.ZipInfo(name)
@@ -123,6 +147,8 @@ def main():
         z.writestr(entry(UPDATE_SH_PATH, 0o755), base.read(UPDATE_SH_PATH))
         for dest, content in files.items():
             z.writestr(entry(dest, 0o644), content)
+        for dest, content in scripts.items():
+            z.writestr(entry(dest, 0o755), content)
 
     digest = hashlib.md5(out.read_bytes()).hexdigest()
     print(f"wrote {out} ({out.stat().st_size} bytes, md5 {digest}, version {args.version})")
