@@ -103,10 +103,11 @@ RESTORE_UPDATE_SH = """#!/bin/sh
 # Restore package: put back the stock native files saved by a native install.
 ROOT="${ZQ_ROOT:-}"
 ZQ="${ZQ_MISC:-/misc}/zq-native"
-if [ -f "$ZQ/restore.sh" ]; then
-  sh "$ZQ/restore.sh" || exit 1
+# Use this package's validator, including when the installed helper is older.
+if [ -f "./misc/zq-native/restore.sh" ]; then
+  sh ./misc/zq-native/restore.sh || exit 1
 else
-  echo "$(date '+%Y-%m-%d %H:%M:%S') restore: no $ZQ/restore.sh" \\
+  echo "$(date '+%Y-%m-%d %H:%M:%S') restore: package lacks restore.sh" \\
     >> "$ROOT/usr/z-loader/zjinnova/web/zq-native.txt"
   exit 1
 fi
@@ -211,6 +212,7 @@ def main():
         write_zip(Path(args.out), args.version, {
             UPDATE_SH_PATH: (RESTORE_UPDATE_SH, 0o755),
             WEBVERSION_PATH: (args.version + "\n", 0o644),
+            f"{NATIVE_META}/restore.sh": ((NATIVE_DIR / "restore.sh").read_text(), 0o755),
         })
         return
 

@@ -177,6 +177,82 @@ class PackageTests(unittest.TestCase):
             if path.endswith("z-link.sh"): continue  # installed by native-test
             self.assertEqual((self.root / path).read_bytes(), self.base.read(path))
 
+    def assert_restore_refuses_without_changes(self, name):
+        before = {line.split()[1]: (self.root / line.split()[1]).read_bytes()
+                  for line in self.listing}
+        version = self.root / "usr/z-loader/webversion"
+        old_version = version.read_bytes()
+        flag = self.root / "data/local/tmp/zq_hevc"
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("keep codec flag")
+        checkpoint = self.root / "usr/z-loader/zjinnova/web/zq-video-request.txt"
+        checkpoint.write_text("keep diagnostic")
+        self.install(BUILD / f"restore_native_{PACKAGE_VERSION}.zip", name, success=False)
+        for path, content in before.items():
+            self.assertEqual((self.root / path).read_bytes(), content, path)
+        self.assertEqual(version.read_bytes(), old_version)
+        self.assertTrue((self.misc / "zq-native/active").exists())
+        self.assertEqual(flag.read_text(), "keep codec flag")
+        self.assertEqual(checkpoint.read_text(), "keep diagnostic")
+        status = (checkpoint.parent / "zq-native.txt").read_text()
+        self.assertNotIn("stock native files restored", status)
+        self.assertIn("restore aborted", status)
+
+    def test_restore_rejects_missing_empty_and_malformed_manifests(self):
+        self.install(self.hevc)
+        manifest = self.misc / "zq-native/stock/native.list"
+        for name, contents in [
+            ("missing", None), ("empty", ""), ("blank", "\n \t\n"),
+            ("bad-hash", "not-an-md5 usr/z-loader/lib/libAirPlay.so\n"),
+            ("extra-field", self.listing[0] + " unexpected\n"),
+            ("unsafe-path", "0" * 32 + " usr/z-loader/../escape\n"),
+        ]:
+            with self.subTest(name=name):
+                if contents is None:
+                    manifest.unlink()
+                else:
+                    manifest.write_text(contents)
+                self.assert_restore_refuses_without_changes("restore-" + name)
+
+    def test_restore_checks_all_backups_before_any_replacement(self):
+        self.install(self.hevc)
+        # A failure at the LAST entry must leave the earlier live files intact.
+        for index in [0, -1]:
+            path = self.listing[index].split()[1]
+            backup = self.misc / "zq-native/stock" / path
+            original = backup.read_bytes()
+            for failure in ["corrupt", "missing"]:
+                with self.subTest(index=index, failure=failure):
+                    if failure == "corrupt":
+                        backup.write_bytes(b"corrupted backup")
+                    else:
+                        backup.unlink()
+                    try:
+                        self.assert_restore_refuses_without_changes(f"restore-{index}-{failure}")
+                    finally:
+                        backup.write_bytes(original)
+
+    def test_restore_package_uses_its_validator_with_older_installed_helper(self):
+        self.install(self.hevc)
+        # Previously the small restore ZIP invoked the installed helper, so a
+        # new ZIP could silently retain the old unchecked restoration behavior.
+        (self.misc / "zq-native/restore.sh").write_text("#!/bin/sh\nexit 0\n")
+        manifest = self.misc / "zq-native/stock/native.list"
+        contents = manifest.read_bytes()
+        manifest.unlink()
+        self.assert_restore_refuses_without_changes("restore-old-helper-invalid")
+        manifest.write_bytes(contents)
+        self.install(BUILD / f"restore_native_{PACKAGE_VERSION}.zip", "restore-old-helper-valid")
+        self.assert_stock()
+        self.assertFalse((self.misc / "zq-native/active").exists())
+
+    def test_restore_accepts_valid_manifest_without_final_newline(self):
+        self.install(self.hevc)
+        manifest = self.misc / "zq-native/stock/native.list"
+        manifest.write_text(manifest.read_text().rstrip("\n"))
+        self.install(BUILD / f"restore_native_{PACKAGE_VERSION}.zip", "restore-no-newline")
+        self.assert_stock()
+
     def test_package_limits_and_compressed_video_setting(self):
         with zipfile.ZipFile(self.hevc) as z:
             names = set(z.namelist())
@@ -188,7 +264,9 @@ class PackageTests(unittest.TestCase):
             self.assertIn(b"const NATIVE_HEVC = true;", settings)
             self.assertNotIn(b"const NATIVE_HEVC = false;", settings)
             self.assertIn(b'[[2, "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]', settings)
-            self.assertIn(b'disconnect the phone, apply, then reconnect', settings)
+            self.assertIn(b'changes take effect after you reconnect your phone', settings)
+            self.assertIn(b'Reloading this page alone keeps the current codec', settings)
+            self.assertIn(b'For JPEG, disconnect the phone before saving, then reconnect', settings)
             from build_patch import BUNDLE_PATH
             self.assertIn(b'var Mf=__zq.mode|0;', z.read(BUNDLE_PATH))
             import json

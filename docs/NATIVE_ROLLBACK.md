@@ -41,7 +41,15 @@ requires that reboot.
 4. Events are appended to `/usr/z-loader/zjinnova/web/zq-native.txt`, readable in a
    browser at `https://www.zbox.link/zq-native.txt` (the box has no shell).
 
-`restore.sh` skips files already identical to the backup and clears
+Before replacing any live file, `restore.sh` requires a readable, nonempty manifest
+with valid checksum/path entries and verifies every listed backup against its
+recorded stock MD5. Missing manifests, empty/invalid entries, missing backups,
+checksum failures or a missing `md5sum` abort before replacement. The active
+recovery marker, codec flag and diagnostics remain intact on these failures.
+The restore ZIP includes and runs its own validator, so this protection applies
+even when the installed `/misc/zq-native/restore.sh` is an older version.
+
+After successful preflight, `restore.sh` skips files already identical to the backup and clears
 `/misc/zq-native/active` only when every file is stock again. Since 3.0-oc7,
 successful restore also removes `/data/local/tmp/zq_hevc` (the codec-selection flag)
 and the codec diagnostic `/zq-codec.txt`. Current restore also clears the four
@@ -57,9 +65,13 @@ and the codec diagnostic `/zq-codec.txt`. Current restore also clears the four
 - Native HEVC installation and stock-backup creation have run on the owner's box.
   Live restore and crash-watchdog recovery have not been demonstrated. A separate
   `--native-test` / `--restore-native` device exercise remains a useful recovery check.
-- Eight reproducible package tests (`tools/test_native_packages.py`)
+- Twelve reproducible package tests (`tools/test_native_packages.py`)
   cover HEVC install/restore, backup expansion, changed native files, corrupted
-  backups, reinstall and package contents, including removal of the codec flag. The restore package now propagates restore errors.
+  backups, reinstall and package contents, including removal of the codec flag.
+  Restore regressions cover missing/empty/malformed manifests, missing/corrupt
+  first and last backups, preserving live files/recovery state on failure, old
+  installed helpers and valid manifests without a trailing newline.
+  The restore package propagates restore errors.
 - Limits: the watchdog sees only crashes. A receiver that hangs or that the iPhone
   rejects needs the restore package. A change that broke boot, the kernel or Wi-Fi
   would need FEL recovery; native packages here change none of those.

@@ -18,8 +18,35 @@ if [ ! -f "$ZQ/stock/COMPLETE" ]; then
   exit 1
 fi
 
+# Check the entire backup before touching any live file. A COMPLETE marker alone
+# does not establish that the manifest or the saved files survived intact.
+abort() {
+  log "$*; restore aborted, native files unchanged; use tools/flash.sh rollback"
+  exit 1
+}
+LIST="$ZQ/stock/native.list"
+[ -f "$LIST" ] && [ -r "$LIST" ] && [ -s "$LIST" ] || abort "missing or empty backup manifest"
+command -v md5sum >/dev/null 2>&1 || abort "md5sum missing"
+count=0
+while read -r sum path extra || [ -n "$sum$path$extra" ]; do
+  [ -n "$sum$path$extra" ] || continue
+  [ -z "$extra" ] && [ "${#sum}" -eq 32 ] || abort "invalid backup manifest entry"
+  case "$sum" in *[!0123456789abcdef]*) abort "invalid backup checksum" ;; esac
+  case "$path" in
+    usr/z-loader/*) ;;
+    *) abort "invalid backup path" ;;
+  esac
+  case "/$path/" in */../*|*/./*|*//*) abort "invalid backup path" ;; esac
+  [ -f "$ZQ/stock/$path" ] || abort "missing backup of $path"
+  got="$(md5sum "$ZQ/stock/$path")" || abort "could not checksum backup of $path"
+  got="${got%% *}"
+  [ "$got" = "$sum" ] || abort "backup checksum mismatch for $path"
+  count=$((count + 1))
+done < "$LIST"
+[ "$count" -gt 0 ] || abort "empty backup manifest"
+
 failed=0
-while read -r sum path; do
+while read -r sum path || [ -n "$sum$path" ]; do
   [ -n "$path" ] || continue
   # already stock (e.g. an install that failed before reaching this file)
   if command -v cmp >/dev/null 2>&1 && cmp -s "$ZQ/stock/$path" "$ROOT/$path"; then
@@ -32,7 +59,7 @@ while read -r sum path; do
     failed=1
     log "could not restore $path"
   fi
-done < "$ZQ/stock/native.list"
+done < "$LIST"
 sync
 
 if [ "$failed" = 0 ]; then

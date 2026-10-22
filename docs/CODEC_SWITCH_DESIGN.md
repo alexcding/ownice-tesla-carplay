@@ -136,8 +136,8 @@ reboot and Mac Chrome tests are recorded in the diagnostic report. Deployment re
 
 The HEVC package replaces `libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`,
 `z-tesla`, `z-link.sh`, web player/settings/bundle, TLS launcher/config and webversion.
-Stock backups remain under `/misc/zq-native/stock`. The restore package runs
-that saved restore script, which puts back the five stock native files and
+Stock backups remain under `/misc/zq-native/stock`. The restore package includes its own validator, checks the saved manifest and
+all listed backup checksums before replacing files, and restores the five stock native files and
 clears the HEVC flag and codec error file. Reboot after installing or restoring
 native files before relying on them. The web player remains and can play H.264; mode 2 is still
 non-zero passthrough in stock `z-tesla`. Full stock recovery remains

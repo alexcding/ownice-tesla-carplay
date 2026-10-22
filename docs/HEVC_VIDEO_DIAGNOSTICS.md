@@ -431,3 +431,27 @@ phone reconnect: 184 video messages / 2,829,634 bytes by about seven seconds,
 filtered control trace showed two acquisitions (0), INIT focus 0, and no release.
 This validates one fresh-session refresh with the cleanup patch in the proxy;
 extended idle/background return remains untested. Nothing was flashed.
+
+#### Unpublished release review: rollback validation fixes
+
+Review of the complete `3.0-oc8-hevc-preview.1` candidate reproduced two rollback
+failures using disposable dummy files: a missing backup manifest returned success
+and removed the active marker; a corrupted backup overwrote a working file and
+returned success. No device operation was involved.
+
+`restore.sh` now preflights the readable/nonempty manifest, checksum/path fields
+and every listed backup before replacing any live file. Failure returns nonzero
+and preserves native files, version, active marker, codec flag and checkpoints.
+The restore ZIP now includes and invokes its own validator, so an older installed
+helper cannot bypass the new checks. See [native rollback](NATIVE_ROLLBACK.md).
+
+The unpublished full update, native-test, restore and web ZIPs were rebuilt.
+Twelve package tests pass, including missing/empty/malformed manifests, corrupt
+or missing first/last backups, an older installed helper and a valid manifest
+without a trailing newline. Package checks also use the current codec help text
+instead of an obsolete wording assertion. Python/shell syntax and diff checks
+pass. All four native binaries remain byte-identical to the 30-test ARM build;
+no native codec or focus code changed in this rollback fix. Both release ZIPs
+pass integrity/path/version checks, include the updated validator and contain no
+private-key/certificate files. Checksums were regenerated under ignored
+`build/releases/3.0-oc8-hevc-preview.1/`. Nothing was released, flashed or rebooted.
