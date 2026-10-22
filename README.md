@@ -51,6 +51,22 @@ https://www.zbox.link
 
 and bookmark it. If that gives you HD, you may not need the patch.
 
+## Download and install
+
+Get the experimental [3.0-oc8-hevc release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/3.0-oc8-hevc).
+Download the **update** ZIP, leave it zipped, connect to the adapter's Wi-Fi,
+and open `http://3.3.3.3`. Use its normal firmware update option to upload the ZIP.
+Wait for installation to finish, then reboot the adapter and reconnect the phone.
+No terminal or on-device patching is needed. The separate **restore** ZIP is for rollback.
+
+Supported base: **Ownice T3 stock 2.9.11 / build 202402031913**. Older firmware such
+as 2.9.2 and other models are unverified. Reach the supported official base through
+the normal vendor update path before applying this package.
+
+The release/tag is `3.0-oc8-hevc`; its update ZIP is the exact installed preview
+artifact and reports `3.0-oc8-hevc-preview.1`. The owner reports no regression so
+far. Long idle/return, Tesla playback and live recovery testing remain pending.
+
 ## Build from stock 2.9.11
 
 The builder downloads the pinned official archive (or accepts `--firmware /path/to/stock.zip`),

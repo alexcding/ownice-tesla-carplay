@@ -495,3 +495,15 @@ It uses the saved stock backups and the new completeness/checksum validator.
 Full stock reinstall remains available through `tools/flash.sh rollback`. Either
 rollback is a separate authorized device action; native restoration requires
 an explicit reboot afterward. No adapter reboot or GitHub release was performed.
+
+#### Owner feedback and release authorization
+
+After full-preview installation, the owner reported "no regression so far" and
+explicitly requested pushing all changes to main and releasing `3.0-oc8-hevc`.
+This is owner feedback, not independent confirmation of reboot completion, long
+idle behavior, Tesla playback or live rollback. The prerelease uses the exact
+installed update ZIP and its matching restore ZIP/checksums; internal version
+`3.0-oc8-hevc-preview.1` is retained to preserve the tested artifact identity.
+Release instructions specify the supported 2.9.11 / 202402031913 base, the normal
+web update page, explicit post-install reboot and phone codec renegotiation.
+Older firmware such as 2.9.2 remains unverified.

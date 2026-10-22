@@ -124,8 +124,10 @@ applies ten exact instruction replacements to four SHA-256-pinned files:
 Each file gains a read/execute load segment containing our handlers. Bridges use
 PC-relative calls into existing PLT/GOT entries; no imports, authentication
 material or dynamic relocations are added. Original vendor bytes are read only
-at build time and outputs stay under ignored `build/`. Do not commit or publicly
-upload these native artifacts. The old embedded GNU build ID is inherited from
+at build time and outputs stay under ignored `build/`. Keep firmware-derived
+artifacts out of Git. The owner-authorized GitHub prerelease distributes only the
+reviewed selected-file update/restore ZIPs, never the stock vendor archive or its
+private TLS keys/certificates. The old embedded GNU build ID is inherited from
 the base; use the manifest's SHA-256 hashes to identify patched files.
 
 The HEVC package offers HEVC (mode 2), H.264 (mode 1) and JPEG (mode 0), with
