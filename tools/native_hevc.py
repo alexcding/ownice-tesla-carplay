@@ -150,7 +150,7 @@ def getter(name, symbol, dereference=False):
 """
 
 
-def payload(elf, name, directory, diagnostics=False):
+def payload(elf, name, directory, diagnostics=False, keep_video_focus=False):
     base = align(max(p[2] + p[5] for p in elf.ph if p[0] == 1))
     asm = ".syntax unified\n.thumb\n.text\n"
     cfiles, patches = [], []
@@ -284,6 +284,26 @@ zq_focus_exit:
         absolute = {"request_keyframe": 0x5a6bd, "focus_resume": 0x5a49d}
     else:
         raise ValueError(name)
+    if keep_video_focus and name == "z-tesla":
+        # Only the current video socket's CLOSED branch reaches this site,
+        # after connected was cleared. Mode 2 keeps the previously requested
+        # focus and skips this browser-close focus notification. Explicit
+        # focus requests and all other disconnect/session handling are intact.
+        asm += """
+.global zq_video_close_focus
+.thumb_func
+zq_video_close_focus:
+    push {r0, r1}
+    ldr r0, [r3, #0x44]
+    cmp r0, #2
+    pop {r0, r1}
+    beq 1f
+    strb.w r2, [r3, #0x48]
+    b.w video_close_focus_resume
+1:  b.w video_close_focus_skip
+"""
+        patches += [(0x219a8, bytes.fromhex("83f84820"), "zq_video_close_focus")]
+        absolute.update(video_close_focus_resume=0x219ad, video_close_focus_skip=0x219bb)
     if diagnostics and name == "libzlink-main.so":
         cfiles += ["stream_diag_main.c"]
         constants["addr_zq_diag_session"] = 0xf1118
@@ -393,11 +413,11 @@ zq_diag_write_entry:
     return base, linked.section(".zqhevc"), patches, symbols
 
 
-def patch_native(name, original, directory, diagnostics=False):
+def patch_native(name, original, directory, diagnostics=False, keep_video_focus=False):
     if name not in PINNED or hashlib.sha256(original).hexdigest() != PINNED[name]:
         raise ValueError(f"{name}: stock SHA-256 mismatch; refusing patch")
     elf = ELF(original)
-    base, code, patches, symbols = payload(elf, name, directory, diagnostics)
+    base, code, patches, symbols = payload(elf, name, directory, diagnostics, keep_video_focus)
     result = bytearray(original)
     changes = []
     for address, old, symbol in patches:
@@ -440,6 +460,8 @@ def patch_native(name, original, directory, diagnostics=False):
               "payload_address": hex(base), "payload_bytes": len(code), "patches": changes}
     if diagnostics:
         report["diagnostics"] = True
+    if keep_video_focus:
+        report["keep_video_focus"] = True
     (directory / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return bytes(result), report
 
@@ -449,12 +471,14 @@ def main():
     p.add_argument("--input-dir", required=True, type=Path)
     p.add_argument("--out-dir", required=True, type=Path)
     p.add_argument("--diagnostics", action="store_true")
+    p.add_argument("--keep-video-focus", action="store_true")
     args = p.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     reports = []
     for name in PINNED:
         data, report = patch_native(name, (args.input_dir / name).read_bytes(),
-                                    args.out_dir / (name + ".build"), args.diagnostics)
+                                    args.out_dir / (name + ".build"), args.diagnostics,
+                                    args.keep_video_focus)
         (args.out_dir / name).write_bytes(data)
         reports.append(report)
     print(json.dumps(reports, indent=2))

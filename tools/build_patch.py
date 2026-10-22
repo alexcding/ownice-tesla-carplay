@@ -180,6 +180,8 @@ def main():
                         help="experimental native CarPlay HEVC negotiation and compressed passthrough")
     ap.add_argument("--native-video-diag", action="store_true",
                     help="with --native-hevc, expose temporary native video checkpoints (adds -vdiag)")
+    ap.add_argument("--hevc-keep-video-focus", action="store_true",
+                    help="experimental: retain mode-2 video focus across browser disconnect (adds -focus)")
     ap.add_argument("--native-only", action="store_true",
                     help="with --native-hevc/--native-test, preserve installed player and TLS/Wi-Fi files")
     native.add_argument("--restore-native", action="store_true",
@@ -187,6 +189,8 @@ def main():
     args = ap.parse_args()
     if args.native_video_diag and not args.native_hevc:
         ap.error("--native-video-diag requires --native-hevc")
+    if args.hevc_keep_video_focus and not args.native_hevc:
+        ap.error("--hevc-keep-video-focus requires --native-hevc")
     if args.native_only and not (args.native_hevc or args.native_test):
         ap.error("--native-only requires --native-hevc or --native-test")
     if args.wifi_bw40_test:
@@ -195,7 +199,8 @@ def main():
         args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
                         + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
                         + ("" if args.tls_chacha else "-aes")
-                        + ("-vdiag" if args.native_video_diag else ""))
+                        + ("-vdiag" if args.native_video_diag else "")
+                        + ("-focus" if args.hevc_keep_video_focus else ""))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -249,7 +254,8 @@ def main():
                     path = f"usr/z-loader/{'bin' if name == 'z-tesla' else 'lib'}/{name}"
                     content, report = native_hevc.patch_native(
                         name, base.read(path), Path(directory) / (name + ".build"),
-                        diagnostics=args.native_video_diag)
+                        diagnostics=args.native_video_diag,
+                        keep_video_focus=args.hevc_keep_video_focus)
                     natives[path] = (content, 0o755)
                     reports.append(report)
             entries[f"{NATIVE_META}/hevc-build.json"] = (json.dumps(reports, indent=2) + "\n", 0o644)

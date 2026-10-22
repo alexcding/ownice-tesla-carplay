@@ -115,3 +115,77 @@ showed 1970-01-01 01:16:49. Uploaded package identity matches the native-only
 SHA-256 above. No reboot was issued, and these checkpoints have not yet been
 validated on the running device. After reboot, compare working HEVC playback
 against one browser refresh before reconnecting the phone again.
+
+## Active-device refresh results
+
+After the owner's phone reconnect, all four checkpoint files were readable:
+
+| Checkpoint | Raw fields |
+| --- | --- |
+| request | `00000000 00000001 00000000` |
+| phone | `00000789 00000002 00000000` |
+| sender | `00000789 00000002 00020001` |
+| output | `0000114c 00000040 00000000` |
+
+The existing worker reported HEVC `hvc1.1.6.L120.B0`. These snapshots establish
+that diagnostic code is active and normal callbacks/write attempts occur after
+phone reconnect. They do not reconstruct the earlier blackout because focus
+updates reset the frame checkpoints.
+
+The agent then reloaded the existing player once. At socket age 17 seconds the
+worker had an open video socket, zero messages/bytes/configurations/keyframes,
+empty codec, and selected/reported mode 2. The request checkpoint again read
+`00000000 00000001 00000000`; phone/sender/output returned HTTP 404. At socket age
+122 seconds, worker input remained zero. Thus the hook ran with an active
+session, and its keyframe API returned immediate success, but no post-request
+frame reached the receiver callback during this observation. This places the
+failure before `cp_VideoData_cb`, not specifically in the sender queue.
+
+Immediate success is not a phone acknowledgement. Static inspection of
+`AirPlayReceiverSessionSendCommand` confirms it queues an HTTP command and uses
+a separate completion path when a callback is provided. The current diagnostic
+call provides no completion callback. Frames might be absent on the wire or
+rejected before `cp_VideoData_cb`; the checkpoints do not distinguish these.
+REA/Hopper evidence: `ev_042c62554fad87e1810b915d98a3dbcf18f942bf3c792d6647336ee99c64f84e`.
+
+## Opt-in focus retention experiment
+
+Candidate build `3.0-oc8-vdiag-focus` retains the prior video-focus value when
+the current browser video socket closes in numeric mode 2. It still marks the
+browser disconnected and retains existing queue and session-close handling.
+New sockets still run the original focus update and the oc8 keyframe hook.
+Explicit control-channel focus requests remain intact. Modes 0, 1 and other
+values execute the original focus-release path. The condition is the selected
+numeric mode, not a separate test of phone platform.
+
+Hypothesis: avoiding the browser-close resource-release/reacquire transition
+may prevent the HEVC stream from becoming stuck. This has not been proven on
+hardware. It does not fix a converter failure or establish that the phone
+honors `forceKeyFrame`. It may leave the phone encoding after the last browser
+closes, increasing phone/Wi-Fi activity until the phone session ends or an
+explicit focus change occurs. No frame cache or stale IRAP replay is added.
+
+The only additional instruction replacement is `z-tesla:0x219a8`, originally
+`83f84820` (`strb.w r2,[r3,#0x48]`). The new leaf checks context mode at `+0x44`:
+mode 2 skips to `0x219ba`, preserving the prior focus byte; other modes replay
+the store and resume at `0x219ac`. The client-active flag was cleared at
+`0x21998` before this site. Instruction evidence:
+`ev_705ca5c7326e8c7e52bfafbdbfe9b91c1136dcb7367f6b5d7c8d75d53ed5cb67`.
+
+Build with `--native-hevc --native-video-diag --native-only --hevc-keep-video-focus`.
+Default packages do not enable this experiment. Thirty ARM tests and eight
+package tests pass, including the complete current-client close branch through
+focus dispatch, preservation of prior focus in mode 2, original mode 0/1 paths,
+and original stack/live-register behavior at two load addresses. The native-only
+package contains no player files and its binaries match the tested payloads.
+Only `z-tesla` differs from the installed diagnostic build's native binaries.
+
+Candidate: `build/update_tesla_native_3.0-oc8-vdiag-focus.zip` (1,975,175 bytes).
+SHA-256: `b43b5be5986b2681390a59f4e8b4317c0a6ffbc504579a8e0db4e91fbb007d9e`.
+Stock restore: `build/restore_native_3.0-oc8-vdiag-focus.zip`, using the existing
+saved backup (SHA-256
+`0b3b275fa450801a42a7e5ea2ed1894a08a4da695688f6ea764707432a2bf295`).
+Reinstalling the previous native-only `3.0-oc8-vdiag` package
+removes the experiment while retaining diagnostics. Each activation or rollback
+requires a reboot. Candidate deployment requires separate owner approval;
+neither candidate upload nor reboot has occurred.

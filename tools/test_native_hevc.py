@@ -100,6 +100,7 @@ class Machine:
         self.context = self.allocate(bytes(24))
         self.apis = {base + v: k for k, v in self.elf.imports().items()}
         if name == "z-tesla":
+            self.apis[base + 0x1eb64] = "stock_video_focus"
             self.apis[base + 0x20b46] = "stock_write_file"
             self.apis[base + 0x20b08] = "stock_read_file"
             self.apis[base + 0x27b12] = "json_get"
@@ -161,6 +162,9 @@ class Machine:
         if obj[2] < 0: raise AssertionError("double CFRelease")
 
     def api(self, name, a, sp):
+        if name == "stock_video_focus":
+            self.focus_changes.append((a[0], a[1])); return 0
+        if name == "puts": return 0
         if name == "stock_cp_resource_mode":
             self.focus_changes.append(a[0]); return 0
         if name == "AirPlayReceiverSessionForceKeyFrame":
@@ -324,6 +328,43 @@ class Machine:
 
 
 class NativeHEVCTests(unittest.TestCase):
+    def test_hevc_browser_close_keeps_focus_and_other_modes_keep_stock_path(self):
+        manifest = json.loads((BUILD / "z-tesla.build/manifest.json").read_text())
+        if not manifest.get("keep_video_focus"): self.skipTest("focus experiment only")
+        for base in (0, 0x18000000):
+            for mode in (0, 1, 2, 3):
+                for previous in (0, 1):
+                    m = Machine("z-tesla", base)
+                    ctx = m.allocate(bytes(0x200)); m.put32(ctx + 0x44, mode)
+                    m.uc.mem_write(ctx + 0x48, bytes([previous, 0xaa, 0xbb, 0xcc]))
+                    args = (0x12345678, 0x23456789, 1, ctx)
+                    resume = 0x219ba if mode == 2 else 0x219ac
+                    m.run(0x219a8, args, boundary=base + resume)
+                    self.assertEqual(bytes(m.uc.mem_read(ctx + 0x48, 4)),
+                                     bytes([previous if mode == 2 else 1, 0xaa, 0xbb, 0xcc]))
+                    self.assertEqual([m.uc.reg_read(r) for r in REGS[:4]], list(args))
+                    # Original focus call and PC-relative bridges use AAPCS
+                    # scratch r12. Check the live/callee-saved registers.
+                    self.assertEqual([m.uc.reg_read(r) for r in REGS[4:12]],
+                                     [0x11110000 + i for i in range(4, 12)])
+                    self.assertEqual(m.uc.reg_read(UC_ARM_REG_SP), m.top)
+
+    def test_hevc_close_still_deactivates_client_without_sending_focus_release(self):
+        manifest = json.loads((BUILD / "z-tesla.build/manifest.json").read_text())
+        if not manifest.get("keep_video_focus"): self.skipTest("focus experiment only")
+        for base in (0, 0x18000000):
+            for mode in (0, 1, 2):
+                m = Machine("z-tesla", base)
+                ctx = m.allocate(bytes(0x200)); frame = m.allocate(bytes(0x40))
+                m.put32(ctx + 0x44, mode); m.put32(ctx + 0x6c, 1)
+                m.put32(frame + 0x18, ctx)
+                args = [0x11110000 + i for i in range(8)]; args[7] = frame
+                m.run(0x21994, args, boundary=base + 0x219ba)
+                self.assertEqual(m.get32(ctx + 0x6c), (0,))
+                self.assertEqual(m.uc.mem_read(ctx + 0x48, 1)[0], 0 if mode == 2 else 1)
+                self.assertEqual(m.focus_changes, [] if mode == 2 else [(ctx, 1)])
+                self.assertEqual(m.uc.reg_read(UC_ARM_REG_SP), m.top)
+
     def require_diagnostics(self):
         manifest = json.loads((BUILD / "libzlink-main.so.build/manifest.json").read_text())
         if not manifest.get("diagnostics"): self.skipTest("diagnostic build only")
