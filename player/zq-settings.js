@@ -4,6 +4,9 @@
 // The "Video" button appears on the box's home screen (Tesla house icon).
 
 (function () {
+  if (window.__zqLoaded) return; // idempotent: tolerate a double <script> include
+  window.__zqLoaded = true;
+
   const PROJECT = "ownice-tesla-carplay";
   const PROJECT_URL = "github.com/alexcding/ownice-tesla-carplay";
   const KEY = "zq.settings";
@@ -51,20 +54,23 @@
   };
 
   const CSS = `
-    #zq-btn{position:fixed;top:12px;right:12px;z-index:99999;height:48px;padding:0 18px;border-radius:24px;
-      border:0;background:rgba(10,132,255,.9);color:#fff;font:600 16px system-ui,sans-serif;display:none}
-    #zq-btn.show{display:block}
-    #zq-panel{position:fixed;top:60px;right:8px;z-index:99999;width:260px;padding:16px;border-radius:14px;
-      background:rgba(28,28,30,.95);color:#fff;font:15px system-ui,sans-serif;display:none}
+    /* match the vendor toolbar buttons (.settings-btn / .refresh-btn) */
+    #zq-btn{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
+      height:50px;margin-left:30px;padding:0 20px;border-radius:26px;border:0;cursor:pointer;
+      background:#F0F0F0;color:#6d6d6d;box-shadow:0 2px 4px #0003;
+      font:600 20px system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+    /* match the vendor settings card: light surface, gray pills, blue accent */
+    #zq-panel{position:fixed;top:60px;right:8px;z-index:99999;width:300px;padding:18px;border-radius:20px;
+      background:#fff;color:#222;font:16px system-ui,sans-serif;box-shadow:0 6px 24px #0004;display:none}
     #zq-panel.open{display:block}
-    #zq-panel h4{margin:12px 0 6px;font-size:12px;font-weight:600;color:#aaa;text-transform:uppercase}
+    #zq-panel h4{margin:16px 0 8px;font-size:13px;font-weight:600;color:#8a8a8e;text-transform:uppercase}
     #zq-panel h4:first-child{margin-top:0}
-    #zq-panel .row{display:flex;flex-wrap:wrap;gap:6px}
-    #zq-panel button{flex:1 0 auto;min-height:40px;padding:0 10px;border-radius:8px;border:0;
-      background:#3a3a3c;color:#fff;font:inherit}
-    #zq-panel button.on{background:#0a84ff}
-    #zq-panel .apply{width:100%;margin-top:14px;background:#30d158;color:#000;font-weight:600}
-    #zq-panel .info{margin-top:10px;font-size:12px;color:#888}
+    #zq-panel .row{display:flex;flex-wrap:wrap;gap:8px}
+    #zq-panel button{flex:1 0 auto;min-height:44px;padding:0 14px;border-radius:22px;border:0;cursor:pointer;
+      background:#F0F0F0;color:#6d6d6d;font:600 15px system-ui,sans-serif}
+    #zq-panel button.on{background:#105bf1;color:#fff}
+    #zq-panel .apply{width:100%;margin-top:16px;background:#105bf1;color:#fff}
+    #zq-panel .info{margin-top:12px;font-size:12px;color:#999;line-height:1.5}
   `;
 
   function group(title, key, options, draft, render) {
@@ -83,27 +89,6 @@
       row.appendChild(b);
     }
     return [h, row];
-  }
-
-  // The vendor's Settings > Display Mode row only offers "Compat." since 2.9.x.
-  // Replace its options with HD (H.264) / Compat. (JPEG), bound to our settings.
-  function restoreDisplayModeRow() {
-    const vendorOpt = document.querySelector(".compat-mode-opt:not(.zq-opt)");
-    if (!vendorOpt) return;
-    const row = vendorOpt.parentElement;
-    if (row.querySelector(".zq-opt")) return;
-    for (const el of row.children) el.style.display = "none";
-    for (const [h264, label] of [[true, "HD (H.264)"], [false, "Compat. (JPEG)"]]) {
-      const opt = document.createElement("span");
-      opt.className = "compat-mode-opt zq-opt" + (settings.h264 === h264 ? " selected" : "");
-      opt.textContent = label;
-      opt.onclick = () => {
-        if (settings.h264 === h264) return;
-        save({...settings, h264});
-        location.reload();
-      };
-      row.appendChild(opt);
-    }
   }
 
   function buildUI() {
@@ -166,19 +151,34 @@
     }
     btn.onclick = () => {
       render();
-      panel.classList.toggle("open");
+      const open = !panel.classList.contains("open");
+      if (open) {
+        // Anchor the panel under the button, clamped to stay on-screen.
+        const r = btn.getBoundingClientRect();
+        const w = panel.offsetWidth || 300;
+        const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+        panel.style.right = "auto";
+        panel.style.left = `${Math.round(left)}px`;
+        panel.style.top = `${Math.round(Math.min(r.bottom + 8, window.innerHeight - 8))}px`;
+      }
+      panel.classList.toggle("open", open);
     };
-    document.body.append(btn, panel);
+    document.body.append(panel); // the button lives in the vendor toolbar (see sync)
 
-    // Only offer the button on the box's home screen (house icon), identified
-    // by the vendor's settings button, so nothing covers CarPlay itself.
+    // Put the Video button inline in the vendor home toolbar, right after the
+    // settings (gear) button, instead of floating over the screen. Vue may
+    // re-render and drop it, so the observer below re-inserts it.
     let queued = false;
     function sync() {
       queued = false;
-      const home = !!document.querySelector(".settings-btn");
-      btn.classList.toggle("show", home);
-      if (!home) panel.classList.remove("open");
-      restoreDisplayModeRow();
+      const gear = document.querySelector(".settings-btn");
+      for (const el of document.querySelectorAll("#zq-btn")) if (el !== btn) el.remove();
+      if (gear) {
+        if (btn.previousElementSibling !== gear) gear.insertAdjacentElement("afterend", btn);
+      } else {
+        btn.remove();
+        panel.classList.remove("open");
+      }
     }
     new MutationObserver(() => {
       if (!queued) {
