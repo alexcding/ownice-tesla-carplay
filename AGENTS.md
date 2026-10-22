@@ -136,10 +136,13 @@ need a server restart. Debug via `--remote-debugging-port` and CDP.
 
 ## Recovery / flashing channels
 
-- **Web UI at `http://3.3.3.3` is the real deploy + recovery path.** Upload a zip to `upload.cgi`; the box runs
-  `/usr/z-loader/update.sh`. To roll back, re-upload stock 2.9.11 (vendor CDN zip, MD5
-  `3a743be56b60df524825cffcf45238cd`). Our packages never touch `update-web`, `z-connman`, `update.sh` or boot
-  scripts, so this path survives a bad web-only package.
+- **`tools/flash.sh` is the deploy + rollback tool.** `update` uploads `build/update_tesla.zip`; `rollback`
+  downloads (MD5-checked) and flashes stock 2.9.11; `status` prints the version. It POSTs `file` (as `upload.zip`)
+  plus `md5` to `/cgi-bin/upload.cgi` — exactly what the box's update page does — then waits for the reboot.
+  A `{"code": 0}` response means the box accepted it and installs on its own.
+- **Web UI at `http://3.3.3.3` is the underlying path.** The box runs `/usr/z-loader/update.sh` after upload. Our
+  packages never touch `update-web`, `z-connman`, `update.sh` or boot scripts, so this path survives a bad
+  web-only package.
 - **ADB over USB** (gadget `18d1:0002`, `Google.Inc / Configfs ffs gadget`, started by `etc/adb_conf.sh` at boot):
   present but **not a usable flash path**. `adb push` writes files (reports success then a harmless socket `EOF`),
   but `adb shell <cmd>` is hijacked — adbd execs `/bin/login`, which rejects `-c`, so no command runs; `adb pull`/`ls`
@@ -152,6 +155,7 @@ need a server restart. Debug via `--remote-debugging-port` and CDP.
 ## Status
 
 - Repo public: github.com/alexcding/ownice-tesla-carplay.
-- 3.0 package builds and every patch applies; **not yet flashed or tested in the Tesla**.
+- **3.0 flashed to the box and verified serving all patched files** (settings script, our worker with resync,
+  `__zq` bundle patches, hover fix). `checkver` reports `3.0`. **Not yet road-tested in the Tesla itself.**
 - Stock entry page loads Baidu analytics (`hm.baidu.com`) and the "enterFullscreen" action goes through
   `v.qq.com` / `1905.com` redirectors back to `www.zbox.link`.

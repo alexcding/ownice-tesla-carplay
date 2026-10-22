@@ -45,15 +45,24 @@ python3 -I tools/build_patch.py           # → build/update_tesla.zip
 
 ### Install
 
-1. Join the box's Wi-Fi (or use a phone connected to it).
-2. Open `http://3.3.3.3`, choose the update file, and upload `build/update_tesla.zip`.
-   (The stock uploader posts to `/cgi-bin/upload.cgi`; the box unzips it and runs `update.sh`.)
-3. Wait for the reboot; `sh tools/box_info.sh` should report `"ver2": "2.10"`.
+Join the box's Wi-Fi, then:
+
+```sh
+tools/flash.sh update        # uploads build/update_tesla.zip, waits for reboot, prints the new version
+```
+
+Or by hand: open `http://3.3.3.3`, choose the update file, and upload `build/update_tesla.zip`. The box posts
+it to `/cgi-bin/upload.cgi`, unzips it and runs `update.sh`, then reboots. `tools/flash.sh status` should then
+report `"ver2": "3.0"`. The LED blinks during the install — do not pull power.
 
 ### Roll back
 
-The vendor's "Check for updates" compares versions with `!=`, so on 2.10 it offers the official 2.9.11
-package again. Or upload the official zip manually.
+```sh
+tools/flash.sh rollback      # downloads + flashes stock 2.9.11 (MD5-checked)
+```
+
+Only web files change, so rollback is a normal flash — no special recovery needed. The vendor's "Check for
+updates" also re-offers stock, since it treats any different version as an update.
 
 ## Viewing CarPlay on a Mac
 
@@ -68,7 +77,9 @@ open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-serv
 
 | Script | Purpose |
 |---|---|
-| `tools/build_patch.py` | build the patched update package |
+| `tools/build_patch.py` | build the patched update package (`build/update_tesla.zip`, default version 3.0) |
+| `tools/flash.sh` | flash / roll back over the web UI: `status`, `update [zip]`, `rollback [zip]` |
+| `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
 | `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |
 
 See [AGENTS.md](AGENTS.md) for device internals.
