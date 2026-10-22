@@ -42,6 +42,12 @@ BUNDLE_PATCHES = [
      'A.onmessage=R=>{const D=R.data||{};D.id=="resync"&&(cn(),lu());D.id=="stats"&&(__zq.stats=D);'
      'D.id=="ws"&&__zq.onWorkerSocket(D);'
      'D.id=="render"&&g.value==Se.STARTED&&(l.value=!0)}', 1),
+    # Socket recovery must not tell the phone to stop compressed video. The
+    # native socket-close guard cannot suppress this separate control message.
+    # Keep stock JPEG cleanup and all explicit focus controls unchanged.
+    ("retain compressed video focus during player cleanup",
+     'n=null,j.value="",l.value=!1,C.value=!1,Xn(!1)}function cu()',
+     'n=null,j.value="",l.value=!1,C.value=!1,__zq.h264||Xn(!1)}function cu()', 1),
     # Worker-owned video socket (zq-settings.js videoSocket): frames skip the main thread.
     ("video socket opened through __zq (worker-owned unless set to Page)",
      "n=new WebSocket(`${i7}?_t=${new Date().getTime()}`)",

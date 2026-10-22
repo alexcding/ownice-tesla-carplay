@@ -333,7 +333,9 @@ The adapter became reachable again and reported `3.0-oc8-vdiag-focus2`. A fresh
 mode-1 disconnect probe now left the keyframe-request checkpoint at `[0,1,0]`
 before mode change, after mode change, and after video close. This contrasts with
 the earlier `[1,1,0]` close result and confirms the intended mode-1 retention
-behavior is now active. The probe restored mode 2 and the existing video socket.
+behavior in that probe. The probe restored mode 2 and the existing video socket.
+The later control-message capture below limits this probe's ability to establish
+native runtime activation independently.
 
 The old black phone session still had no frames. The owner was asked to reconnect
 the phone once; the page subsequently showed session end then session 4 with
@@ -360,8 +362,60 @@ bundle contains a conditional INIT focus value and a cleanup focus-release path,
 but this trace does not implicate either in the successful refresh. No further
 JavaScript focus patch was made.
 
-These results validate the corrected guard's mode-1 behavior and the reported
-HEVC preference-transition sequence on this Mac Chrome/adapter session. They
+These results demonstrate the reported HEVC preference-transition sequence on
+this Mac Chrome/adapter session. They
 do not establish exhaustive reconnect reliability, long-term phone power use,
 Android Auto behavior or Tesla-browser compatibility. No additional flash was
-needed after runtime activation was confirmed.
+needed for those successful transitions.
+
+#### Blackout after leaving and returning: browser cleanup focus release
+
+The owner subsequently reported leaving and returning to a black screen, without
+an intentional codec change. The selected and persisted modes were both 2; the
+video socket was open but had received zero messages/bytes and configured no
+decoder. The request checkpoint was `[0,1,0]`; receiver/sender/output checkpoints
+were absent. This establishes no video delivery, not a decoder failure. The
+precise event during the absence remains unknown.
+
+A repeated temporary mode-1/socket-close probe now captured only whitelisted
+outgoing control fields on the existing browser socket. Before and after setting
+mode 1 the checkpoint was `[0,1,0]`. After video close it was `[1,1,0]`, and the
+browser had sent both `{message_id:38,is_h264_mode:1}` and
+`{message_id:5,video_focus_request:1}`. The probe restored mode 2 and reopened the
+existing video socket. No additional player client, upload or reboot was used.
+
+This corrects the earlier inference that a close-triggered `[1,1,0]` necessarily
+proved an old native binary was running: browser cleanup can itself send an
+explicit release, outside the native socket-close guard. Conversely a retained
+checkpoint alone does not independently prove which native code is active.
+
+The stock bundle's `cn()` cleanup calls `Xn(false)`, which sends that explicit
+release. Worker resync calls cleanup, and control reconnect/health-check failure
+paths also reach it. The local bundle patch now suppresses that cleanup release
+when `__zq.h264` is true (numeric mode 1 or 2). It retains socket teardown and
+state reset, JPEG cleanup release, and all explicit acquire/release controls.
+This complements the native focus guard; it does not replace it. Retaining
+compressed video focus can keep phone video activity running during recovery.
+
+`tools/test_player_focus.mjs <stock.zip>` applies every strict bundle replacement,
+executes the resulting cleanup with connected/absent sockets in all three modes,
+and verifies repeated cleanup, handler removal, state reset, JPEG release and
+explicit focus controls. Live idle/resume reliability and the cause of the
+original unattended transition remain unvalidated; do not describe this patch
+as a confirmed complete fix until those checks pass. Removing this bundle
+replacement and restarting the development proxy reverses the local change.
+
+Local validation passed: the new cleanup regression, settings-codec tests,
+worker-codec tests, JavaScript syntax, `git diff --check`, and a strict web-package
+build from the pinned archive. The review-only output is
+`build/update_tesla_focus_cleanup_review.zip`, version `3.0-oc8`; it was not
+uploaded and must not be confused with the installed native diagnostic package.
+
+After restarting this worktree's port-8443 proxy and reloading the existing
+player, a filtered trace showed two focus acquisitions (0) and INIT focus 0.
+Repeating the same temporary mode-1/socket-close probe left the checkpoint at
+`[0,1,0]` throughout, with only the mode-setting message captured and **no outgoing
+focus release**. Mode 2 and the existing video socket were restored. This confirms
+the browser cleanup behavior changed as intended. The already-black phone
+session still supplied zero video bytes afterward; fresh-session idle/resume
+validation is pending a phone reconnect. No flash or adapter reboot was performed.
