@@ -286,16 +286,21 @@ zq_focus_exit:
         raise ValueError(name)
     if keep_video_focus and name == "z-tesla":
         # Only the current video socket's CLOSED branch reaches this site,
-        # after connected was cleared. Mode 2 keeps the previously requested
-        # focus and skips this browser-close focus notification. Explicit
+        # after connected was cleared. Compressed modes 1/2 keep the requested
+        # focus and skip this browser-close focus notification. Explicit
         # focus requests and all other disconnect/session handling are intact.
+        # The selected mode can change before the active phone codec does:
+        # mode 1 must also retain focus during an HEVC -> H.264 preference change.
         asm += """
 .global zq_video_close_focus
 .thumb_func
 zq_video_close_focus:
     push {r0, r1}
     ldr r0, [r3, #0x44]
+    cmp r0, #1
+    beq 2f
     cmp r0, #2
+2:
     pop {r0, r1}
     beq 1f
     strb.w r2, [r3, #0x48]
@@ -462,6 +467,7 @@ def patch_native(name, original, directory, diagnostics=False, keep_video_focus=
         report["diagnostics"] = True
     if keep_video_focus:
         report["keep_video_focus"] = True
+        report["focus_retained_modes"] = [1, 2]
     (directory / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return bytes(result), report
 

@@ -221,3 +221,50 @@ or Tesla-browser compatibility. A zero instantaneous fps after the initial burst
 on a static screen does not negate the received configuration/keyframes or the
 owner's visual confirmation. Long-term behavior when the browser remains closed,
 phone energy use, other phone/OS versions and Android Auto remain unvalidated.
+
+### Codec preference transition exposed another blackout
+
+The owner then selected H.264 while the phone had been sending HEVC. The new
+page selected mode 1 but initially displayed the earlier box-mode-2 report.
+It received zero video messages. One further normal browser reload did not
+recover: at socket age 29 seconds the selected and box-reported modes were both
+1, with zero messages/bytes, no parameter sets/keyframes and no decoder codec.
+The keyframe request log remained `00000000 00000001 00000000`, while all three
+frame checkpoints were missing. No phone reconnect was performed for this test.
+
+The original focus experiment has a mode-transition flaw: it decides whether to
+retain focus using the current selected integer, which is not the active phone
+codec. A preference change to 1 can therefore enable the original browser-close
+focus-release path while the existing phone session is still HEVC. This fits
+the observed failure; the frame checkpoints do not independently show the wire
+codec or prove the phone's internal reason for stopping.
+
+Candidate `3.0-oc8-vdiag-focus2` extends retention to both supported compressed
+modes, 1 and 2. JPEG mode 0 and unsupported values retain the original close
+behavior. This permits an existing compressed session to keep displaying during
+an H.264/HEVC preference change; it does not renegotiate the codec. The codec
+preference still applies on the next phone connection. The phone may keep
+encoding with the browser closed in either compressed mode. JPEG transitions
+from active HEVC still require disconnecting the phone before changing mode.
+
+The same hash-pinned `0x219a8` site is used. A mode-1 comparison is added before
+the mode-2 comparison, preserving their equality flag through the register pop.
+Thumb disassembly and 30 ARM tests verify the generated code, prior-focus-byte
+preservation, stack/r0-r11 preservation and current-client deactivation for both
+compressed modes. Eight install/upgrade/restore tests pass. Packaged native
+bytes match the tested payloads; only `z-tesla` differs from the installed focus
+candidate's native binaries. There are no player files in the native-only ZIP.
+
+Build with `--native-hevc --native-video-diag --native-only
+--keep-compressed-video-focus` (the older `--hevc-keep-video-focus` spelling is
+retained as an alias). The generated suffix is now `-focus2`; defaults still
+leave focus retention disabled.
+
+Update: `build/update_tesla_native_3.0-oc8-vdiag-focus2.zip`, 1,975,204 bytes,
+SHA-256 `e8aa539ca94ac363db6b0deb34278de32b110af2af9596b39515d7cd0075d467`.
+Restore: `build/restore_native_3.0-oc8-vdiag-focus2.zip`, SHA-256
+`ae1eb360583dbb540742e4ec28484d6116d8db8b442fafb851d87bd954150245`.
+The previous focus and diagnostic packages remain available for native rollback.
+Installation and rollback require explicit authorization and a reboot. This
+candidate is built and locally reviewed/tested only; no upload or reboot has
+occurred, and mode-transition recovery remains to be validated on-device.

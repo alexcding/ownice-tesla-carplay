@@ -180,8 +180,9 @@ def main():
                         help="experimental native CarPlay HEVC negotiation and compressed passthrough")
     ap.add_argument("--native-video-diag", action="store_true",
                     help="with --native-hevc, expose temporary native video checkpoints (adds -vdiag)")
-    ap.add_argument("--hevc-keep-video-focus", action="store_true",
-                    help="experimental: retain mode-2 video focus across browser disconnect (adds -focus)")
+    ap.add_argument("--keep-compressed-video-focus", "--hevc-keep-video-focus",
+                    dest="hevc_keep_video_focus", action="store_true",
+                    help="experimental: retain compressed video focus across browser disconnect (adds -focus2)")
     ap.add_argument("--native-only", action="store_true",
                     help="with --native-hevc/--native-test, preserve installed player and TLS/Wi-Fi files")
     native.add_argument("--restore-native", action="store_true",
@@ -200,7 +201,7 @@ def main():
                         + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
                         + ("" if args.tls_chacha else "-aes")
                         + ("-vdiag" if args.native_video_diag else "")
-                        + ("-focus" if args.hevc_keep_video_focus else ""))
+                        + ("-focus2" if args.hevc_keep_video_focus else ""))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
