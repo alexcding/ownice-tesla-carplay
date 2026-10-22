@@ -88,8 +88,9 @@ nothing and took down the server that answered it, port 80 once and port 443 onc
   plus `md5` to `/cgi-bin/upload.cgi` — exactly what the box's update page does — then waits until `checkver` reports the new version.
   A `{"code": 0}` response means the box accepted it and installs on its own.
 - **Web UI at `http://3.3.3.3` is the underlying path.** The box runs `/usr/z-loader/update.sh` after upload. Our
-  packages never touch `update-web`, `z-connman`, `update.sh` or boot scripts, so this path survives a bad
-  web-only package.
+  packages never touch `update-web`, `z-connman` or `update.sh`, so this path survives a bad package. Since
+  `3.0-oc5` every package also ships `usr/z-loader/bin/z-tesla-sh.sh` (ChaCha20 TLS config for z-tesla only, or the
+  stock script with `--no-tls-chacha`); `--wifi-*` options patch `etc/` boot scripts.
 - **ADB over USB** (gadget `18d1:0002`, `Google.Inc / Configfs ffs gadget`, started by `etc/adb_conf.sh` at boot):
   present but **not a usable flash path**. `adb push` reports success, then `failed to read copy response: EOF`
   (exit 1); on 2026-10-21 a pushed `web/zq-adbtest.txt` was not served afterwards (404 while the player's files
@@ -146,6 +147,9 @@ nothing and took down the server that answered it, port 80 once and port 443 onc
   fixed channel 44. After a power cycle it came up at **40 MHz / 150 Mbit/s** on its own (macOS client).
   Leftovers from the diagnostics builds stay in the web root (`zq-wifi.txt`, `zq-diag-*.txt`, redacted) and
   `/usr/z-loader/zq-bw40-tried`. 802.11ac (`--wifi-ac`) is not flashed.
+- 2026-10-22 (later): `3.0-oc4-ht40-tls` flashed and power-cycled: raw touch, frame-gap resync, and z-tesla's player
+  sockets on TLS 1.3 ChaCha20 (verified on 5002/9002/7002). The owner reports the player as much faster.
+  The same content is the `3.0-oc5` default build (`--wifi-ht40` stays opt-in).
 - **An update does not reboot the box** (observed twice): `checkver` shows the new version at once, web files apply
   at once, but a changed `etc/` boot script only runs after a power cycle. Diagnostics v1 looked broken for that
   reason; its report (uptime 65 s) appeared after the next boot.

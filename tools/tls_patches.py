@@ -1,4 +1,4 @@
-"""Opt-in (--tls-chacha): z-tesla's player sockets prefer ChaCha20-Poly1305 (firmware 2.9.11).
+"""Default (opt out: --no-tls-chacha): z-tesla's player sockets prefer ChaCha20-Poly1305 (firmware 2.9.11).
 
 The player's control/video/audio WebSockets (z-tesla, libwebsockets with a statically
 linked OpenSSL 1.1.1) negotiate TLS 1.3 AES-256-GCM with Chrome. The T113's Cortex-A7
@@ -12,6 +12,8 @@ system_default puts ChaCha20 first with server preference. Only z-tesla gets it:
 the z-connman web servers (Go, own TLS) that serve uploads and rollback are untouched.
 An OpenSSL that does not load the file keeps today's cipher. Check after a power
 cycle: `openssl s_client -connect 3.3.3.3:5002` reports the negotiated cipher.
+Verified on BOX_1189B: ports 5002/9002/7002 negotiate TLS_CHACHA20_POLY1305_SHA256.
+--no-tls-chacha builds ship the stock z-tesla-sh.sh, so flashing one reverts this.
 """
 
 Z_TESLA_SH_PATH = "usr/z-loader/bin/z-tesla-sh.sh"

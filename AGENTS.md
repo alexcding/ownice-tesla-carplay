@@ -54,7 +54,7 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc4` (bump `-oc5`, `-oc6`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `3.0-oc5` (bump `-oc6`, `-oc7`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -67,10 +67,10 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc4`) |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default version `3.0-oc5`) |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
-| `tools/tls_patches.py` | opt-in (`build_patch.py --tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |
+| `tools/tls_patches.py` | default (opt out: `build_patch.py --no-tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |
 | `tools/test_wifi_patches.py` | runs the `--wifi-ac` scripts against mocked commands: `python3 -I tools/test_wifi_patches.py --firmware <zip>` |
 | `tools/dev_player.py` | local HTTPS reverse proxy to a live box; serves patched player + `player/*.js` without flashing (`--firmware <zip>` when the box already runs our build) |
 | `tools/bench_worker.mjs` | Node micro-benchmark of `player/worker.js` per-frame JS (WebCodecs stubbed): `node tools/bench_worker.mjs [--smooth]` |
@@ -129,12 +129,14 @@ label or receiver version does not establish compatibility or HEVC support.
   5 s), so a native z-tesla change could replace the restart. A focus request while focused gives no IDR.
 - Player sockets (z-tesla, `:5002` etc.) negotiate TLS 1.3 **AES-256-GCM** with stock settings; the T113 (Cortex-A7)
   has no AES instructions. Plain `ws://` is not an option: WebCodecs needs an HTTPS page and Chrome blocks `ws://`
-  from HTTPS. `--tls-chacha` (version suffix `-tls`) makes z-tesla prefer ChaCha20. Flashed on BOX_1189B as
+  from HTTPS. ChaCha20 is the **default** since `3.0-oc5` (`tools/tls_patches.py`; `--no-tls-chacha` → `-aes`
+  builds that ship the stock `z-tesla-sh.sh`, which undoes it). First flashed on BOX_1189B as
   `3.0-oc4-ht40-tls`: after a power cycle ports 5002/9002/7002 negotiate `TLS_CHACHA20_POLY1305_SHA256` against an
   AES-first client, Mac Chrome streams 51–61 fps with 0 frame gaps, and the owner reports the player as "a lot
-  faster" (subjective; no before/after Touch→frame numbers yet). Only z-tesla gets the config; uploads/rollback (z-connman, Go TLS) are unaffected. Needs a
-  power cycle. A later build without the flag leaves the changed `z-tesla-sh.sh` in place: `flash.sh rollback`
-  (stock zip) restores it.
+  faster" (subjective; no before/after Touch→frame numbers yet); one hard-drag run afterwards had 0 frame gaps and
+  0 resyncs. Only z-tesla gets the config; uploads/rollback (z-connman, Go TLS) are unaffected. Needs a power cycle.
+  The box's OpenSSL (static in z-tesla and the shared `libcrypto.so.1.1`) has no ARM assembly, so every cipher runs
+  in plain C; ChaCha20-Poly1305 is the cheapest of the three Chrome offers there.
 - Touch→frame (touch-down to the first frame after a still screen, Video panel): ~157 ms median, 70–313 ms over
   11 taps on Mac Chrome via the dev proxy. Decode is ~2 ms, so the lag is the phone/box round trip.
 - Video socket defaults to **Worker**: `__zq.videoSocket` gives the bundle a WebSocket stand-in, `worker.js` owns
@@ -157,7 +159,8 @@ label or receiver version does not establish compatibility or HEVC support.
   (verified once, `--wifi-bw40-test`); details in docs/DEVICE_REFERENCE.md "Wi-Fi radio". `--wifi-ht40` does this
   at every boot and after channel changes (verified on BOX_1189B); `--wifi-ac` (80 MHz) would be cut the same way
   without it and cannot be combined with it yet.
-- Boot-script (`etc/`) changes need a **power cycle** after flashing: an update does not reboot the box.
+- Boot-script changes (`etc/`, `usr/z-loader/bin/z-tesla-sh.sh`) need a **power cycle** after flashing: an update
+  does not reboot the box.
 - Box I/O limits: no shell; `adb push` does not land; `downloadLog.cgi` crashes the server that answers it.
   Read state only through the `check*`/`get*` CGIs (HTTP or HTTPS) and files the web root serves.
 - Wi-Fi: adapter and car network on different 5 GHz channels caused 0.6–2 s stalls in DiPlay's tests

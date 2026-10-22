@@ -12,9 +12,10 @@ are applied at build time.
 Usage:
     python3 -I tools/build_patch.py                     # download + build
     python3 -I tools/build_patch.py --firmware path.zip # use a local copy
-    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc4-ac)
-    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc4-diag)
-    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc4-ht40)
+    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 3.0-oc5-ac)
+    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 3.0-oc5-diag)
+    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 3.0-oc5-ht40)
+    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 3.0-oc5-aes)
 """
 
 import argparse
@@ -41,7 +42,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "3.0-oc4"
+CUSTOM_VERSION = "3.0-oc5"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -100,7 +101,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
     ap.add_argument("--version",
-                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option, '-tls' for --tls-chacha); "
+                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option, '-aes' for --no-tls-chacha); "
                          "keep a non-vendor suffix")
     ap.add_argument("--wifi-ac", action="store_true",
                     help="also patch the soft-AP boot scripts for 802.11ac 80 MHz")
@@ -110,8 +111,9 @@ def main():
                     help="run the soft AP at 40 MHz (re-requested from the driver after start-up, with fallback)")
     ap.add_argument("--wifi-bw40-test", action="store_true",
                     help="one-time experiment: ask the AP driver for 40 MHz at runtime (implies --wifi-diag)")
-    ap.add_argument("--tls-chacha", action="store_true",
-                    help="z-tesla's player sockets prefer ChaCha20 over AES-GCM (cheaper on the T113)")
+    ap.add_argument("--tls-chacha", action=argparse.BooleanOptionalAction, default=True,
+                    help="z-tesla's player sockets prefer ChaCha20 over AES-GCM (cheaper on the T113; default on, "
+                         "--no-tls-chacha ships the stock z-tesla-sh.sh)")
     ap.add_argument("--out", default="build/update_tesla.zip")
     args = ap.parse_args()
     if args.wifi_bw40_test:
@@ -119,7 +121,7 @@ def main():
     if args.version is None:
         args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
                         + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
-                        + ("-tls" if args.tls_chacha else ""))
+                        + ("" if args.tls_chacha else "-aes"))
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -137,10 +139,12 @@ def main():
     for path, patches in wifi_patches.patches(ac=args.wifi_ac, diag=args.wifi_diag,
                                               bw40=args.wifi_bw40_test, ht40=args.wifi_ht40).items():
         scripts[path] = player_patches.apply(base.read(path).decode(), patches)
+    # z-tesla-sh.sh is always shipped: patched, or stock to undo an earlier ChaCha20 build.
+    for path, patches in tls_patches.SCRIPT_PATCHES.items():
+        stock = base.read(path).decode()
+        scripts[path] = player_patches.apply(stock, patches) if args.tls_chacha else stock
     if args.tls_chacha:
         files[tls_patches.CONF_PATH] = tls_patches.CONF
-        for path, patches in tls_patches.SCRIPT_PATCHES.items():
-            scripts[path] = player_patches.apply(base.read(path).decode(), patches)
 
     def entry(name, mode):
         info = zipfile.ZipInfo(name)
