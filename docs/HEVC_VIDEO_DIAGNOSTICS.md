@@ -308,3 +308,21 @@ The initial worker-inspector probe stopped without changing state: the worker
 discovery URL was blank, and direct worker Runtime access subsequently timed out.
 The completed probe used the existing page's Worker messaging interface, with
 finally-handled restoration of mode and socket, instead.
+
+#### Owner-authorized reboot request
+
+After another failed refresh, the mode-1 probe was repeated with an additional
+sample between setting mode 1 and closing video. The request checkpoint stayed
+`[0,1,0]` after the mode change, then became `[1,1,0]` after closing the video
+socket. Mode 2 and the socket were restored. This separates mode persistence
+from the observed close-triggered focus release.
+
+The owner then explicitly authorized an adapter reboot. A GET to the documented
+`/cgi-bin/doreboot.cgi` endpoint returned an empty body with curl exit 0. The
+adapter subsequently stopped answering read-only version requests, and the
+existing Chrome worker reported a connecting socket rather than an open one.
+Ten bounded version polls and a later retry timed out. The Mac still had a
+route to the adapter through its existing gateway. These observations confirm
+loss of reachability after the reboot request, not successful boot completion
+or focus2 runtime activation. No further flash or reboot request was sent.
+Physical power/network confirmation is needed before continuing validation.
