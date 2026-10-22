@@ -485,7 +485,7 @@
       );
       const apply = document.createElement("button");
       apply.className = "apply";
-      apply.textContent = "Apply & reload";
+      apply.textContent = "Apply";
       apply.onclick = () => {
         save(draft);
         location.reload();
@@ -509,7 +509,7 @@
       const codecHelp = document.createElement("div");
       codecHelp.className = "info";
       codecHelp.textContent = NATIVE_HEVC
-        ? "Reboot the adapter after installing or restoring native files. To change codec: disconnect the phone, apply, then reconnect it. The current stream keeps its negotiated codec until reconnecting."
+        ? "H.264 / HEVC changes take effect after you reconnect your phone. Reloading this page alone keeps the current codec. For JPEG, disconnect the phone before saving, then reconnect."
         : "HEVC selection requires the native codec-switch package. Stream stats show the codec currently received.";
       panel.append(codecHelp, apply, check, probeInfo, info);
       updateInfo();

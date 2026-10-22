@@ -80,7 +80,8 @@ for (const native of [false, true]) {
   const panel = elements.find(el => el.id === "zq-panel");
   assert.match(panel.querySelector(".stream-info").children.join(""), /HEVC/);
   assert.equal(panel.querySelector(".stream-info").children.join("").includes("Codec change failed"), native);
-  if (native) assert.ok(panel.children.some(el => el.textContent?.includes("Reboot the adapter")));
+  if (native) assert.ok(panel.children.some(el =>
+    /changes take effect after.*reconnect your phone/.test(el.textContent || "")));
   assert.ok(panel.children.some(el => el.textContent?.includes(native ? "disconnect the phone" : "requires the native")));
   const allButtons = () => panel.children.flatMap(el => el.children || []);
   const hevc = allButtons().find(el => el.textContent === "HEVC (HD)");
