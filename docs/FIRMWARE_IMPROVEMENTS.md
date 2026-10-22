@@ -19,6 +19,11 @@ those with our player patches at commit `5e8868d`; subsequent main-branch player
 optimizations are not re-audited here. Native HEVC analysis is recorded in
 [HEVC_RESEARCH.md](HEVC_RESEARCH.md).
 
+The [receiver update comparison](RECEIVER_CANDIDATES.md) adds follow-up inspection
+of newer T2C firmware and GitHub projects. AirPlay/320.17.6 was found, but its API
+differs from the T3 receiver and its HEVC capability remains unconfirmed. LIVI and
+CatPlay are source-port candidates, not verified T3 update packages.
+
 This is a broad static survey, not a full decompilation of every executable or
 an exhaustive bug list. The archive is an update payload, not necessarily a
 complete root filesystem. Included scripts and configurations can be unused,

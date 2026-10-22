@@ -12,6 +12,14 @@ decode it in the Tesla browser. No compatible replacement receiver package has
 been verified. It is not yet established whether this T3 can negotiate HEVC
 using its existing authentication hardware and vendor integration.
 
+Follow-up firmware inspection found **AirPlay/320.17.6** in three public CarlinKit
+T2C images. Their receiver libraries are byte-identical and expose a different API
+and dependency set from the T3's `libAirPlay.so`; they are not direct replacements,
+and HEVC support remains unconfirmed. GitHub source candidates include LIVI v9.4.0
+and CatPlay v0.17.0, with no verified T3 build. See the
+[receiver comparison](RECEIVER_CANDIDATES.md) for artifact hashes, version evidence,
+source links and integration limits.
+
 ## Evidence from this adapter's firmware
 
 The local vendor archive was checked against the repository's pinned base MD5:
@@ -100,8 +108,8 @@ reused unchanged.
 | Route | Assessment |
 |---|---|
 | Add an HEVC option to current JavaScript | Insufficient: upstream still supplies H.264 and the native converter assumes AVC. |
-| Update the receiver with a compatible Zjinnova build | Best first route to investigate; no verified public T3 package found. |
-| Integrate another receiver implementation | Substantial port: negotiation, native video callbacks, wrapper integration and existing authorized authentication must all work. No T3 proof yet. |
+| Update the receiver with a compatible Zjinnova build | Vendor-supported route; no verified public T3 package found. The newer T2C 320.17.6 library uses a different API and dependencies. |
+| Integrate another receiver implementation | LIVI's GPLv3 receiver core is a concrete ARMv7 feasibility-study candidate. CatPlay has relevant HEVC code, but reuse terms remain unresolved. Both need native callbacks, authentication and browser-forwarding integration; neither has T3 proof. |
 | Install another adapter's complete firmware | Compatibility not established; shared branding or CPU is insufficient. |
 | Transcode H.264 to HEVC on the T3 | No published HEVC hardware encoder; unsuitable as the initial approach. Also does not reduce the phone-to-adapter H.264 traffic or recover its lost detail. |
 

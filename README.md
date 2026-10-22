@@ -14,6 +14,12 @@ See the [firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) for Wi-Fi, 
 Android Auto, audio/video, service reliability and update work, and the
 [HEVC research](docs/HEVC_RESEARCH.md) for receiver and browser codec requirements.
 
+The [receiver update comparison](docs/RECEIVER_CANDIDATES.md) documents a newer
+**AirPlay/320.17.6** receiver found in CarlinKit T2C firmware, versus this T3 base's
+**280.3**, and evaluates LIVI and CatPlay source projects. No compatible T3 receiver
+upgrade or working HEVC path has been verified; the T2C library uses a different
+API and dependencies.
+
 > Unofficial. Not affiliated with Ownice or zjinnova. Flashing modified firmware is at your own risk.
 
 ## The problem

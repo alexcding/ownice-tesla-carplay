@@ -84,6 +84,9 @@ needs them. Deployment and recovery details do not grant permission to upload or
 [Firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) maps Wi-Fi, phone projection,
 audio/video, native services, updates and diagnostics opportunities to firmware evidence and
 validation requirements. [HEVC research](docs/HEVC_RESEARCH.md) records codec-specific findings.
+[Receiver update candidates](docs/RECEIVER_CANDIDATES.md) records inspected firmware versions,
+artifact hashes, API/dependency differences and GitHub source-port candidates. A newer firmware
+label or receiver version does not establish compatibility or HEVC support.
 
 ## Why stock 2.9.11 looks bad
 
