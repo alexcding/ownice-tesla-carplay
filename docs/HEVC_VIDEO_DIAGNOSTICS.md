@@ -326,3 +326,42 @@ route to the adapter through its existing gateway. These observations confirm
 loss of reachability after the reboot request, not successful boot completion
 or focus2 runtime activation. No further flash or reboot request was sent.
 Physical power/network confirmation is needed before continuing validation.
+
+#### Focus2 activation and transition validation after recovery
+
+The adapter became reachable again and reported `3.0-oc8-vdiag-focus2`. A fresh
+mode-1 disconnect probe now left the keyframe-request checkpoint at `[0,1,0]`
+before mode change, after mode change, and after video close. This contrasts with
+the earlier `[1,1,0]` close result and confirms the intended mode-1 retention
+behavior is now active. The probe restored mode 2 and the existing video socket.
+
+The old black phone session still had no frames. The owner was asked to reconnect
+the phone once; the page subsequently showed session end then session 4 with
+working `hvc1.1.6.L120.B0`, 1328x658. From that fresh working baseline:
+
+| Operation | Selected mode | Actual decoder after reload | Received messages / bytes | Parameters / keyframes |
+| --- | --- | --- | --- | --- |
+| Normal root-page refresh | 2 | HEVC `hvc1.1.6.L120.B0` | 7 / 176,850 | 2 / 2 |
+| Select H.264 and reload player | 1 | HEVC `hvc1.1.6.L120.B0` | 4 / 90,060 | 1 / 1 |
+| Select HEVC and reload player | 2 | HEVC `hvc1.1.6.L120.B0` | 8 / 180,120 | 2 / 2 |
+
+Each refreshed decoder had `waitingForKeyFrame == false`, zero queue backlog
+and a resized video canvas; no phone reconnect occurred between these three
+operations. Preference changes used the existing profile's localStorage and
+player reload, matching the Apply handler's operations. The final selection was
+restored to HEVC. This tests preference transitions within an active HEVC phone
+session, not an actual codec renegotiation or a pure H.264-session refresh.
+
+A narrowly filtered CDP Network capture across the normal refresh observed two
+outgoing REQUEST_VIDEO_FOCUS values of 0 and an INIT with `is_h264_mode:2` and
+`is_hu_video_focus_on:0`; no outgoing focus release was observed in that capture.
+No video payloads, general control contents or credentials were recorded. The
+bundle contains a conditional INIT focus value and a cleanup focus-release path,
+but this trace does not implicate either in the successful refresh. No further
+JavaScript focus patch was made.
+
+These results validate the corrected guard's mode-1 behavior and the reported
+HEVC preference-transition sequence on this Mac Chrome/adapter session. They
+do not establish exhaustive reconnect reliability, long-term phone power use,
+Android Auto behavior or Tesla-browser compatibility. No additional flash was
+needed after runtime activation was confirmed.
