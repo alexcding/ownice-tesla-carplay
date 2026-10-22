@@ -189,3 +189,13 @@ Reinstalling the previous native-only `3.0-oc8-vdiag` package
 removes the experiment while retaining diagnostics. Each activation or rollback
 requires a reboot. Candidate deployment requires separate owner approval;
 neither candidate upload nor reboot has occurred.
+
+### Focus-retention package installation
+
+Subsequently uploaded the native-only `3.0-oc8-vdiag-focus` package with explicit
+owner authorization on 2026-10-22. The updater returned code 0 / success, and the
+version endpoint changed from `3.0-oc8-vdiag` to `3.0-oc8-vdiag-focus`. Package
+SHA-256 matched the candidate identity above, and the ZIP contains no player
+files. No reboot was issued. Activation and HEVC refresh recovery still require
+the owner to reboot, reconnect the phone, then test a browser refresh without
+another phone reconnect until checkpoints are collected.
