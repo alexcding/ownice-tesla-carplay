@@ -800,3 +800,8 @@ Follow-up `/code-review high` fixes (also before packaging):
   installed package**. A `--native-only` package therefore updates the identity
   while the previously installed player files stay in place. `checkver.cgi` (and the
   box's own update check) still sees only the plain version.
+
+**Owner report, 2026-10-22, Tesla browser on `2.9.11-oc13+a96bfcaf1529`:** "no more
+black screen". This is a subjective owner report: the restart count, timings and
+which scenarios were exercised were not recorded. Extended idle/return and the
+side-window → full-screen check in the car remain to be confirmed explicitly.
