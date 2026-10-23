@@ -1,211 +1,275 @@
 # ownice-tesla-carplay
 
-Community revival project for the discontinued **Ownice T3 / zjinnova "T-Box"** wireless
-CarPlay / Android Auto adapter for Tesla. We aim to improve the overall adapter experience:
-Wi-Fi and Bluetooth reliability, phone compatibility, native services, video and audio quality,
-latency, browser playback, diagnostics, and maintainable updates.
+Community revival of the discontinued **Ownice T3 / zjinnova "T-Box"** wireless CarPlay /
+Android Auto adapter for Tesla. The stock firmware shows CarPlay in the Tesla browser as a
+re-encoded, upscaled 720p JPEG stream at 30 fps. This project turns it into a
+**full-resolution, hardware-decoded H.264 or HEVC stream at up to 60 fps**, with lower
+latency, faster encryption, recovery from black screens, and a settings panel in the car.
 
-The default update improves the browser player, resolution, latency and TLS configuration.
-An opt-in native package adds CarPlay HEVC negotiation, compressed passthrough and a
-JPEG/H.264/HEVC setting. HEVC playback is verified on the owner's T3 in **Mac Chrome**
-and in the **Tesla browser** (owner photos: `hvc1.1.6.L123.B0`, 1392x1080, 18–38 fps,
-0 resyncs). Broader hardware compatibility remains untested.
+**Latest release: [2.9.11-oc15](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc15)**
+for the Ownice T3 on stock **2.9.11 / build 202402031913**. It installs through the
+adapter's own web page, no terminal needed.
 
-Current build version: **2.9.11-oc15** (plain `-ocN` for every variant; options are in
-the package's `zq-build.txt`). The owner's adapter runs **2.9.11-oc12**. Extended
-idle/return and the HEVC blackout after a long player absence remain under
-validation. See the [diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md) for the exact evidence.
+> Unofficial. Not affiliated with Ownice, zjinnova or Tesla. Flashing modified firmware is at
+> your own risk; a rollback package is included.
 
-See the [firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) for Wi-Fi, CarPlay,
-Android Auto, audio/video, service reliability and update work, and the
-[HEVC research](docs/HEVC_RESEARCH.md) for receiver and browser codec requirements.
+## Biggest wins
 
-The [receiver update comparison](docs/RECEIVER_CANDIDATES.md) documents a newer
-**AirPlay/320.17.6** receiver found in CarlinKit T2C firmware, versus this T3 base's
-**280.3**, and evaluates LIVI and CatPlay source projects. No compatible T3 receiver
-upgrade has been verified; the T2C library uses a different API and dependencies.
-Our working experimental HEVC path patches the existing T3 receiver instead.
+1. **No more JPEG re-encoding.** The phone's own H.264 or HEVC stream goes straight to
+   the browser's hardware decoder, at full window resolution and up to 60 fps instead of
+   an upscaled 720p JPEG stream at 30 fps. **In an AMD Tesla Model Y: about 60 fps with
+   about 1 ms decode at HiDPI 1080p** (owner report).
+2. **ChaCha20 stream encryption with our ARM NEON implementation.** The adapter's CPU has
+   no AES instructions, so the stock AES-GCM streams were expensive to encrypt. The
+   video, control and audio streams now use ChaCha20, running on an ARM NEON routine
+   (OpenSSL's, pinned, verified and patched into the receiver) instead of plain C. On the
+   adapter the NEON routine needs about half the CPU time of the plain one (1.95×,
+   measured), and the owner tested it in use: one of the most noticeable speed-ups of the
+   project (hands-on comparison, not a timed end-to-end benchmark).
+3. **HEVC in the Tesla browser:** typically a better picture than H.264 at the same Wi-Fi
+   bitrate, decoded in hardware (verified in the car).
+4. **Lower input and frame latency:** a worker-owned video socket and raw touch events
+   keep frames and drags off the page's busy main thread.
+5. **It just reconnects:** automatic recovery from black screens, one connection when
+   the player opens, and correct full-screen and touch mapping at any resolution.
 
-> Unofficial. Not affiliated with Ownice or zjinnova. Flashing modified firmware is at your own risk.
+## Highlights
 
-## The problem
+| | Stock 2.9.11 | This project |
+|---|---|---|
+| **Video path** | Adapter decodes the phone's H.264 and **re-encodes every frame to JPEG** on its small ARM CPU | **Passthrough**: the phone's own H.264 or **HEVC** goes straight to the browser's hardware decoder (WebCodecs) |
+| **Resolution** | Requests 80% of the window, capped at **720p**, then upscales | **Full window size** (Auto, up to 1200 tall), Auto HD up to 1800 tall, or fixed 540p–1440p |
+| **Frame rate** | 30 fps requested | **60 fps**: about 60 fps with about 1 ms decode at HiDPI 1080p in an AMD Tesla Model Y (owner report); 50–61 fps measured while moving in Mac Chrome |
+| **Codec** | JPEG only in practice | **H.264 or HEVC**, switchable in the car; HEVC verified in the Tesla browser |
+| **Frame handling** | Every frame passes through the page's main thread | Video socket and decoding live in a **Web Worker**; frames never touch the main thread |
+| **Touch** | Drag moves wait for the next animation frame; hover drags CarPlay with a mouse | **Raw input events** sent as they arrive; repeated points skipped; mouse hover ignored |
+| **Stream encryption (TLS)** | AES-256-GCM (Chrome's choice) in plain C on a CPU without AES instructions | Video/control/audio streams use **ChaCha20-Poly1305**, in HEVC builds with **ARM NEON**: about **49% less CPU** for the cipher (measured on the adapter) |
+| **Wi-Fi** (opt-in) | Access point starts at 20 MHz, **72 Mbit/s** | **40 MHz, 150 Mbit/s** (measured, macOS client) |
+| **Black screens** | Restart CarPlay by hand | Automatic session restart when a running session delivers no video |
+| **Opening the player** | Sometimes reconnects the phone | **One connection**: reuses the running session's size |
+| **Entry page** | Stays on low-res HTTP from `3.3.3.3` or on tall screens | Always moves to `https://www.zbox.link`, where the HD player works |
 
-The box's player only uses the full-resolution H.264 stream (WebCodecs `VideoDecoder` over `wss://…:5002`)
-when the page is loaded over **HTTPS on `www.zbox.link`**, the only name its TLS certificate covers.
-Otherwise it falls back to a low-res JPEG preview over plain HTTP.
+## Features
 
-The stock entry page (`index.html`, firmware 2.9.11) tries to upgrade to HTTPS, but:
+### Video and streaming quality
 
-1. it probes `https://<current host>/checker.html`. When the car opened `http://3.3.3.3`, that probe hits
-   a certificate-name mismatch, fails silently, and the page stays on HTTP;
-2. it only redirects when the window is shorter than 1300 px (`ch < 1300`).
+- **Compressed passthrough instead of JPEG re-encoding.** The stock firmware decoded the
+  phone's H.264 on the adapter's Allwinner T113 and re-encoded each frame as JPEG. That
+  caused artifacts and latency. The player now asks for H.264 or HEVC passthrough and
+  decodes in the browser with WebCodecs, in hardware where available.
+- **HEVC (H.265) for CarPlay** (native package). The adapter's receiver is patched to
+  advertise HEVC to the iPhone, convert its stream for the browser (VPS/SPS/PPS before
+  every keyframe), and pass it through. Verified in Mac Chrome and in the Tesla browser:
+  `hvc1.1.6.L123.B0` at 1392×1080, 1–5 ms decode, no gaps or resyncs.
+- **Real resolution.** Auto requests the browser window's size at 1× (capped at 1200 tall),
+  instead of 80% of a 720p cap. Auto HD and fixed 540p–1440p are available. Keep within
+  about 3.7 MP for 50+ fps.
+- **60 fps** requested instead of 30. In an AMD Tesla Model Y the owner sees about 60 fps with
+  about 1 ms decode at HiDPI 1080p. In Mac Chrome, 54–61 fps was measured with HEVC
+  and 50–60 fps with H.264 while moving. An idle CarPlay screen sends only a few frames.
+- **Low-latency decoder setup:** `optimizeForLatency` with hardware preferred, and an
+  automatic fallback through simpler configurations if the browser refuses one.
+- **Smooth playback mode** (optional): a small adaptive jitter buffer (p90 arrival jitter
+  + 20 ms, 30–200 ms) for uneven Wi-Fi.
+- **Full-screen and side-window layouts:** the picture is fitted and touch-mapped correctly
+  after resizing (side window → full screen), at any resolution.
 
-## Quick fix, no flashing
+### Latency and touch
 
-In the Tesla browser (connected to the box's Wi-Fi), open exactly:
+- **Worker-owned video socket:** frames go from the network straight to the decoder in a
+  Web Worker. The stock path was about one main-thread task per frame; ours is about four
+  small notes per second.
+- **Raw touch:** drag moves are sent from `pointerrawupdate` as soon as they arrive,
+  instead of waiting for Chrome's frame-aligned `touchmove`. Points that map to the same
+  CarPlay position are skipped.
+- **Quieter hot paths:** no per-move console logging and no per-frame UI update; frame
+  buffers are transferred to the worker, not copied.
+- **Touch→frame** measured at about 157 ms median (Mac Chrome) with decode at about 2 ms.
+  The rest is the phone and adapter round trip. The Video panel measures it live.
 
-```
-https://www.zbox.link
-```
+### Reliability and recovery
 
-and bookmark it. If that gives you HD, you may not need the patch.
+- **Black-screen recovery:** if a running HEVC session's video connection gets nothing for
+  8 s, the player restarts the CarPlay session automatically (at most twice per page
+  load). The owner reported "no more black screen" in the Tesla.
+- **One connection when opening the player:** the adapter restarts the phone session
+  (~13 s) whenever the player asks for a different size. The player now reuses the running
+  session's size when it opens; only a real resize asks for a new one.
+- **Keyframe on reconnect:** the receiver requests a fresh keyframe when a player
+  connects, so a reload shows the picture again without a phone reconnect.
+- **Lost-frame protection:** H.264 `frame_num` gaps trigger a clean resync instead of a
+  smeared picture. Backlog recovery reopens the stream if decoding falls behind.
+- **Codec switch without reconnecting:** changing H.264 ↔ HEVC restarts the phone session
+  so the new codec takes effect. A browser without an HEVC decoder falls back to H.264
+  for that session automatically, without changing your saved choice.
+- **Bounded fallbacks:** decoder refusals step through distinct configurations; H.264
+  backs off and retries instead of staying black.
+
+### Network and security
+
+- **HTTPS entry fix:** the stock entry page stayed on low-res HTTP when opened from
+  `http://3.3.3.3` or on tall screens. It now always moves to `https://www.zbox.link`, the
+  only name the adapter's certificate covers.
+- **ChaCha20 TLS** (default): the receiver's stream connections (video `:5002`, control
+  `:9002`, audio `:7002`) negotiate `TLS_CHACHA20_POLY1305_SHA256` instead of
+  AES-256-GCM, which the Cortex-A7 can only do in slow plain C. The receiver's
+  statically linked OpenSSL 1.1.1 lists AES first and lets the browser choose (Chrome
+  picks AES). Our launcher starts it with `OPENSSL_CONF` → `zq-openssl.cnf`, which lists
+  ChaCha20 first with server preference. This was verified on the adapter after a power
+  cycle against a client offering AES first. The page itself (`:443`) comes from the
+  separate stock web server and keeps its own TLS, so the browser's padlock shows AES;
+  check a `:5002` WebSocket in DevTools instead. The owner described the result as
+  "a lot faster" (subjective).
+- **NEON-accelerated ChaCha20** in every HEVC build: OpenSSL's ARM NEON routine, pinned
+  and verified, patched into the receiver. On the adapter it used about **49% less CPU
+  time** for the cipher (1.95×) and ran 1.90× faster in wall time. That measures the
+  cipher alone, not end-to-end streaming.
+- **40 MHz Wi-Fi** (opt-in `--wifi-ht40`): the access point's driver starts at 20 MHz;
+  the boot script widens it to 40 MHz on a fixed channel. Measured 72 → **150 Mbit/s**,
+  with a fallback after two failed boots. 802.11ac 80 MHz is available as an untested
+  experiment (`--wifi-ac`).
+
+### In-car settings and diagnostics
+
+A **Video** button (camera icon) next to the player's settings button opens a panel:
+
+| Setting | Options |
+|---|---|
+| Resolution | Auto (screen), Auto HD, 540p, 720p, 900p, 1080p, 1440p |
+| Frame rate | 30, 60 |
+| Video | HEVC (HD), H.264 (HD), JPEG (compatible) |
+| Playback | Low latency, Smooth |
+| Video socket | Worker (fast), Page (stock) |
+| Touch | Raw (fast), Stock |
+| Debug overlay | Off, On |
+
+The panel also shows live stream stats: codec, size, fps shown/received, decode time,
+queue, bitrate and bits per pixel, resyncs and frame gaps. It shows touch input delay,
+touch→frame latency, the adapter's Wi-Fi channel, and a **Decoder** line: which hardware
+and software decoders the browser supports, and which configuration is running. The
+**debug overlay** adds session state, video-socket counters, automatic restarts and the
+native receiver's converter reports.
+
+### Safe updates
+
+- **Strict patching:** every change is an exact string or instruction replacement with an
+  expected match count, against MD5- and SHA-256-pinned stock files. A different base
+  fails the build instead of guessing.
+- **Rollback:** native installs back up the stock receiver files first. The restore
+  package checks backups and manifests before replacing anything.
+- **Build identity:** packages carry `zq-build.txt` (version + content hash + options).
+  `tools/flash.sh` waits for exactly that build.
+- **No vendor secrets:** the stock archive and its private TLS keys are never committed
+  or published; patches are applied at build time.
 
 ## Download and install
 
-Get the [2.9.11-oc15 release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc15).
-Download the **update** ZIP, leave it zipped, connect to the adapter's Wi-Fi,
-and open `http://3.3.3.3`. Use its normal firmware update option to upload the ZIP.
-Wait for installation to finish, then reboot the adapter and reconnect the phone.
-No terminal or on-device patching is needed. The separate **restore** ZIP is for rollback.
+1. Download **`update_tesla_hevc_2.9.11-oc15.zip`** from the
+   [release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc15).
+   Leave it zipped.
+2. Connect to the adapter's Wi-Fi and open **http://3.3.3.3**.
+3. Upload the ZIP with the normal firmware update option, and wait until it finishes.
+   Don't cut power while it installs.
+4. **Power-cycle the adapter**, then reconnect the phone.
+5. In the Tesla browser, open **https://www.zbox.link**. In **Video**, choose HEVC or
+   H.264 and **Apply & reload**.
 
-Supported base: **Ownice T3 stock 2.9.11 / build 202402031913**. Older firmware such
-as 2.9.2 and other models are unverified. Reach the supported official base through
-the normal vendor update path before applying this package.
+Supported base: **Ownice T3 stock 2.9.11 / build 202402031913**. Older firmware (such as
+2.9.2) and other models are unverified; update to the official 2.9.11 first. Keep only one
+player window connected at a time.
 
-The release, ZIP names and package version are **`2.9.11-oc15`**. This names the
-supported stock base explicitly; `oc15` identifies our custom revision (the earlier
-`2.9.11-oc8-hevc` release and `3.0-...` identifiers remain in historical records).
-The released update ZIP is byte-identical to the package the owner flashed and used
-in the Tesla (`SHA256SUMS.txt` in the release). HEVC playback, the automatic
-recovery and the touch fix were checked in the car; extended idle/return and the
-in-car codec switch remain to be confirmed.
+**Partial fix without flashing:** in the Tesla browser on the adapter's Wi-Fi, open exactly
+`https://www.zbox.link` and bookmark it. That avoids the stock entry page's HTTP
+fallback, but the stock player still uses its JPEG path; passthrough, HEVC and the
+other features need the update.
 
-## Known issues
+**Roll back:** upload `restore_native_2.9.11-oc15.zip` the same way and power-cycle. For a
+complete stock reinstall, use the official
+[vendor 2.9.11 ZIP](https://cdn.zjinnova.com/tesla/en/update_tesla0817.zip) (MD5
+`3a743be56b60df524825cffcf45238cd`; keep a private copy and don't rehost it, as it
+contains private keys) or `tools/flash.sh rollback`. See
+[native rollback](docs/NATIVE_ROLLBACK.md).
 
-- **HEVC black screen after the phone ran with no player open for a while** (browser
-  closed, leaving the car, adapter booted before the page opened), even though a page
-  reload recovers. Since oc13 the player restarts the CarPlay session automatically when a running
-  session's video connection receives nothing for 8 s (at most twice per page load);
-  otherwise restart CarPlay on the phone. H.264 is reported unaffected.
-- **Expanding from the side window to full screen** showed a small, unclickable
-  picture until the window was restored. Fixed since oc12 (confirmed on Mac Chrome;
-  awaiting in-car confirmation).
-- **Opening the player restarted the phone session** (one or two extra ~13 s reconnects)
-  when the player asked for a different size than the running session. oc14 reuses the
-  running session's size when the page opens (resizing still restarts for full
-  resolution), and its recovery waits for the session itself to run 8 s without video.
-- Changing H.264 / HEVC needs a phone reconnect; Chrome without a hardware HEVC
-  decoder falls back to H.264 automatically.
+## Known limits
 
-See [HEVC diagnostics](docs/HEVC_VIDEO_DIAGNOSTICS.md) for evidence.
+- **First open after another device used the adapter:** one session restart (~15 s) may
+  happen while it learns your window size.
+- **Very high resolutions cost frame rate:** 2912×1440 gave about 30 fps against 55–60 at
+  window size. **Auto** is recommended for the smoothest picture.
+- **Changing to or from JPEG** still needs the phone disconnected before Apply, then a
+  reconnect.
+- Still being validated: long idle/return in the car, the in-car codec switch, 802.11ac.
+  Android Auto has no HEVC path. See the
+  [HEVC diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
 
-## Build from stock 2.9.11
+## Build from source
 
-The builder downloads the pinned official archive (or accepts `--firmware /path/to/stock.zip`),
-verifies its MD5 and applies strict, counted replacements. Native patches also require exact
-stock binary SHA-256 matches. Other firmware/board versions are not supported by inference.
-Only repository code and patch descriptions belong in Git; never publish the vendor archive,
-which includes private keys. Generated update packages select only the needed files.
-
-Default browser/TLS package:
+The builder downloads the pinned official archive (or takes `--firmware stock.zip`),
+verifies it, and applies the patches.
 
 ```sh
+# browser player + HTTPS fix + ChaCha20 TLS
 python3 -I tools/build_patch.py --out build/update_tesla.zip
-```
 
-This includes the HTTPS entry fix, player bundle/settings/worker, custom webversion,
-and ChaCha20 TLS launcher/config. Wi-Fi boot-script experiments remain opt-in.
-`--no-tls-chacha` restores the stock TLS launcher.
-
-Experimental complete HEVC package, including the latest browser cleanup fix:
-
-```sh
+# complete HEVC package (as released): native receiver + NEON + browser files
 python3 -m venv build/crypto-env
 build/crypto-env/bin/pip install -r tools/requirements-crypto-neon.txt
 build/crypto-env/bin/python -I tools/build_patch.py --native-hevc --native-video-diag \
-  --keep-compressed-video-focus --version 2.9.11-oc15 \
-  --out build/update_tesla_hevc_2.9.11-oc15.zip
+  --keep-compressed-video-focus --out build/update_tesla_hevc_2.9.11-oc15.zip
+
+# native rollback package
+python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
 ```
 
-Native builds additionally need an ARM-capable Clang/LLD toolchain; see
-[the native path](docs/CARPLAY_HEVC_NATIVE_PATH.md). Every HEVC build now also
-includes the tested ChaCha20 NEON optimization, applied after the HEVC patches.
-Pinned public OpenSSL sources/license are downloaded into ignored
-`build/crypto-source` and verified; `--crypto-source <directory>` allows a prepared
-offline cache. Unknown source, compiled payload or derived receiver hashes fail
-the build. See [crypto release instructions](docs/CRYPTO_RELEASES.md) and
-[device results](docs/CRYPTO_RESEARCH.md).
+Native builds need an ARM-capable Clang/LLD (LLVM 22); see
+[the native path](docs/CARPLAY_HEVC_NATIVE_PATH.md) and
+[crypto release instructions](docs/CRYPTO_RELEASES.md). Browser-only packages leave an
+installed native receiver (and its NEON optimization) untouched. `--native-only` is only
+for intentionally keeping the installed player files. Wi-Fi options: `--wifi-ht40`,
+`--wifi-ac`, `--wifi-diag`. Every package is versioned plain `2.9.11-ocN`; options are
+recorded in its `zq-build.txt`.
 
-Browser/Wi-Fi-only updates leave the installed receiver untouched, preserving
-its NEON optimization. Native HEVC releases cannot silently drop NEON when adding
-other features. Stock restore is an intentional exception. This package patches
-`libAirPlay.so`, `libScreenStream.so`, `libzlink-main.so`, `z-tesla` and `z-link.sh`,
-and includes the browser/TLS files. It can be installed directly over the supported stock
-2.9.11 base; earlier experimental packages are not prerequisites. Every package type is
-named plain `2.9.11-ocN` (no feature suffixes). The release command above sets
-`2.9.11-oc15` and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
-that option deliberately preserves the installed browser/TLS/Wi-Fi files.
-
-A new browser profile defaults to H.264. In Video, select a codec, use **Apply & reload**,
-then reconnect the phone. Reloading alone does not renegotiate H.264 versus HEVC.
-For JPEG, disconnect the phone before saving, then reconnect. The live stream codec
-in the stats is the actual decoder; the selected setting is the next-session preference.
-See [codec switching](docs/CODEC_SWITCH_DESIGN.md) and
-[reconnect recovery](docs/HEVC_RECONNECT_FIX.md).
-
-### Install and activate
-
-After reviewing the package and explicitly authorizing the device update, join the
-box's network (or use an existing route to it) and upload the chosen package:
+Flash a build over the adapter's web API, then power-cycle:
 
 ```sh
 tools/flash.sh update build/update_tesla_hevc_2.9.11-oc15.zip
 tools/flash.sh status
 ```
 
-The web UI at `http://3.3.3.3` also accepts the package. Upload acceptance and a new
-version marker do not prove that native code is active. Native install/restore scripts
-log **REBOOT REQUIRED** and do not reboot automatically. Explicitly reboot/power-cycle
-after installation completes, then reconnect the phone. Do not interrupt installation.
-Keep only one player client connected while testing.
+## Development
 
-### Roll back
-
-Build and retain a native restore package before an experimental installation:
+Test player changes against a live adapter without flashing. A local HTTPS proxy serves
+the patched player and `player/*.js` from disk:
 
 ```sh
-python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
-tools/flash.sh update build/restore_native.zip
+python3 -I tools/dev_player.py --firmware build/stock_2.9.11.zip   # prints the Chrome command
 ```
 
-The restore uses stock backups saved by the native installer and requires a subsequent
-explicit reboot. It restores the five native files and clears codec/diagnostic state;
-its bundled validator checks backup checksums and manifest completeness against
-installation metadata and saved files before replacing any file.
-An invalid manifest or backup aborts restoration and preserves recovery state.
-The custom browser/TLS files remain. The crash watchdog handles repeated receiver exits,
-not a running receiver with a black screen. Hardware watchdog/restore recovery still needs
-validation. See [native rollback](docs/NATIVE_ROLLBACK.md).
-
-Official full-stock download: [vendor 2.9.11 ZIP](https://cdn.zjinnova.com/tesla/en/update_tesla0817.zip),
-expected MD5 **`3a743be56b60df524825cffcf45238cd`**. Download and keep a private
-copy in case the vendor link disappears. Do not rehost this archive: it contains
-private TLS keys. Our attached native restore ZIP uses the adapter's saved backup
-and needs no vendor download; a complete stock reinstall needs the official ZIP.
-
-For a complete stock reinstall, `tools/flash.sh rollback` downloads and uploads the
-MD5-checked stock 2.9.11 archive. The vendor's Check for updates also re-offers stock
-because our version has a non-vendor suffix. Preserve normal network/update access.
-
-## Viewing CarPlay on a Mac
-
-The box serves the player by hostname, so `www.zbox.link` must resolve to `3.3.3.3`:
+To view the adapter's own player on a Mac (`www.zbox.link` must resolve to `3.3.3.3`):
 
 ```sh
 open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-server \
   --host-resolver-rules="MAP www.zbox.link 3.3.3.3" https://www.zbox.link/
 ```
 
-## Tools
-
 | Script | Purpose |
 |---|---|
-| `tools/build_patch.py` | build the update package (default 2.9.11-oc15; native HEVC includes NEON) |
-| `tools/flash.sh` | flash / roll back over the web UI: `status`, `update [zip]`, `rollback [zip]` |
-| `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
-| `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |
+| `tools/build_patch.py` | build update / native / restore packages |
+| `tools/flash.sh` | `status`, `update [zip]`, `rollback [zip]` over the web UI |
+| `tools/dev_player.py` | live HTTPS proxy for player development |
+| `tools/box_info.sh` | read-only status: version, channel, Wi-Fi, certificate expiry |
+| `player/worker.js` | video worker: WebCodecs H.264/HEVC, JPEG fallback, socket, recovery |
+| `player/zq-settings.js` | in-car settings panel, stats, session-size and recovery logic |
 
-See [AGENTS.md](AGENTS.md) for contribution rules and [the device reference](docs/DEVICE_REFERENCE.md) for device internals.
+**Documentation:** [HEVC diagnostics](docs/HEVC_VIDEO_DIAGNOSTICS.md) ·
+[HEVC research](docs/HEVC_RESEARCH.md) ·
+[codec switching](docs/CODEC_SWITCH_DESIGN.md) ·
+[reconnect recovery](docs/HEVC_RECONNECT_FIX.md) ·
+[crypto research](docs/CRYPTO_RESEARCH.md) ·
+[firmware improvement survey](docs/FIRMWARE_IMPROVEMENTS.md) ·
+[receiver candidates](docs/RECEIVER_CANDIDATES.md) ·
+[device reference](docs/DEVICE_REFERENCE.md) ·
+[contribution rules](AGENTS.md)
 
 ## License
 
