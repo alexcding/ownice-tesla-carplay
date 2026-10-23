@@ -20,7 +20,7 @@ adapter's own web page, no terminal needed.
 1. **No more JPEG re-encoding.** The phone's own H.264 or HEVC stream goes straight to
    the browser's hardware decoder, at full window resolution and up to 60 fps instead of
    an upscaled 720p JPEG stream at 30 fps. **In an AMD Tesla Model Y: about 60 fps with
-   about 1 ms decode at HiDPI 1080p** (owner report).
+   about 2 ms decode at 1080p**.
 2. **ChaCha20 stream encryption with our ARM NEON implementation.** The adapter's CPU has
    no AES instructions, so the stock AES-GCM streams were expensive to encrypt. The
    video, control and audio streams now use ChaCha20, running on an ARM NEON routine
