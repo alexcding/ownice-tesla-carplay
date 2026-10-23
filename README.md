@@ -52,7 +52,7 @@ and bookmark it. If that gives you HD, you may not need the patch.
 
 ## Download and install
 
-Get the experimental [2.9.11-oc8-hevc release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc8-hevc).
+Get the [2.9.11-oc15 release](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc15).
 Download the **update** ZIP, leave it zipped, connect to the adapter's Wi-Fi,
 and open `http://3.3.3.3`. Use its normal firmware update option to upload the ZIP.
 Wait for installation to finish, then reboot the adapter and reconnect the phone.
@@ -62,13 +62,13 @@ Supported base: **Ownice T3 stock 2.9.11 / build 202402031913**. Older firmware 
 as 2.9.2 and other models are unverified. Reach the supported official base through
 the normal vendor update path before applying this package.
 
-The release, ZIP names and package version are **`2.9.11-oc8-hevc`**. This names
-the supported stock base explicitly; `oc8` identifies our custom revision. The
-previous `3.0-...` identifiers remain only in historical device/build records.
-Compared with the installed preview ZIP, the renamed update changes only the
-reported webversion; its native/browser payloads are identical. The renamed ZIP
-has not been flashed. The owner reports no regression so far with the preview;
-long idle/return, Tesla playback and live recovery testing remain pending.
+The release, ZIP names and package version are **`2.9.11-oc15`**. This names the
+supported stock base explicitly; `oc15` identifies our custom revision (the earlier
+`2.9.11-oc8-hevc` release and `3.0-...` identifiers remain in historical records).
+The released update ZIP is byte-identical to the package the owner flashed and used
+in the Tesla (`SHA256SUMS.txt` in the release). HEVC playback, the automatic
+recovery and the touch fix were checked in the car; extended idle/return and the
+in-car codec switch remain to be confirmed.
 
 ## Known issues
 
