@@ -33,10 +33,11 @@ BUNDLE_PATCHES = [
     ("re-read the window size when a resize resends INIT",
      'function rf(){te("--- send init msg delay ---"),',
      'function rf(){({w:Fn,h:yt}=a7()),te("--- send init msg delay ---"),', 1),
-    # No-video recovery (zq-settings.js): a size change makes the box restart
-    # the CarPlay session; __zq.nudge is 0 or 2 px off the requested height.
-    ("INIT height nudge for the no-video session restart",
-     "ae%16!=0&&(ae=ae-ae%16+16);", "ae%16!=0&&(ae=ae-ae%16+16);at-=__zq.nudge|0;", 1),
+    # INIT size policy (zq-settings.js __zq.initSize): reuse a running session's
+    # size so opening the player does not restart the phone session; a real
+    # resize or the no-video recovery asks for a different size on purpose.
+    ("INIT size from __zq.initSize",
+     "ae%16!=0&&(ae=ae-ae%16+16);", "ae%16!=0&&(ae=ae-ae%16+16);({w:ae,h:at}=__zq.initSize(ae,at));", 1),
     ("picture scale factor (stock 0.8)", "Ue=.8", "Ue=__zq.scale", 8),
     ("max stream height (stock 720)", "at>720){var Wf=720*ae/at,$f=720",
      "at>__zq.maxh){var Wf=__zq.maxh*ae/at,$f=__zq.maxh", 1),
@@ -79,10 +80,20 @@ BUNDLE_PATCHES = [
     ("a terminated worker closes its sockets",
      "A==null||A.terminate()", "A==null||(__zq.workerGone(A),A.terminate())", 1),
     # Hot path: runs on every touch move (Pc() logs 3 lines, plus one here).
-    ("touch mapping without per-move console logging",
+    # The clamp bounds are the stream size from this page's UPDATE_INFO
+    # (__zq.touchBounds): with a reused or higher-resolution session the stream
+    # is larger than window x scale, and stock bounds cut off the bottom/right
+    # (e.g. the CarPlay home button). Stock window x scale until it arrives.
+    # CarLife wireless keeps stock bounds (its mapping divides by Ue instead).
+    ("touch mapping without per-move console logging, clamped to the stream",
      "function ka(e){const{w:t,h:n}=Pc();te(`getViewDimensions:= ${t} X ${n}`);",
-     "function ka(e){const Pd=document.documentElement,t=en((Pd.clientWidth||document.body.clientWidth)*Ue),"
-     "n=en((Pd.clientHeight||document.body.clientHeight)*Ue);", 1),
+     "function ka(e){const Pd=document.documentElement,Zb=gs!=ft.CARLIFE_WIRELESS&&__zq.touchBounds(),"
+     "t=Zb?Zb.w:en((Pd.clientWidth||document.body.clientWidth)*Ue),"
+     "n=Zb?Zb.h:en((Pd.clientHeight||document.body.clientHeight)*Ue);", 1),
+    # The stream size the bundle derives from UPDATE_INFO (content size for
+    # some phone types): the same values its touch scale ls uses.
+    ("touch bounds follow the bundle's own UPDATE_INFO stream size",
+     'A.postMessage({id:"UpdateFrame",w:Q,h:ae})', '__zq.streamFrame(Q,ae),A.postMessage({id:"UpdateFrame",w:Q,h:ae})', 1),
     # Hot path: runs once per video frame.
     ("no reactive debug label per frame", ':j.value="frame..."+_++,', ":_++,", 1),
     ("transfer frame buffer to worker instead of copying",

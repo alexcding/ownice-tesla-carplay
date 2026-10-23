@@ -74,6 +74,7 @@
     // Session-only fallback: a URL flag, never the saved preference, so a new
     // browser session probes HEVC again and selecting HEVC clears the flag.
     fallbackURL.searchParams.set("zq-h264", "1");
+    applyReason("restart"); // the phone renegotiates H.264 in a new session
     location.replace(fallbackURL.href);
   }
   const hevcReady = (async () => {
@@ -103,7 +104,9 @@
   // Read the control socket's session messages (the box's view of the phone
   // session) for the debug overlay and the no-video recovery below. One
   // listener on that socket; video is untouched.
-  const ctrl = {state: null, phone: null, boxMode: null, at: 0};
+  // since: when session_state last changed (the no-video recovery measures how
+  // long the running session itself has been without video).
+  const ctrl = {state: null, since: 0, phone: null, boxMode: null, at: 0};
   if (window.WebSocket) {
     const NativeWebSocket = window.WebSocket;
     window.WebSocket = class extends NativeWebSocket {
@@ -111,17 +114,22 @@
         super(url, protocols);
         if (!/:(9002|9112)(\/|\?|$)/.test(String(url))) return;
         this.addEventListener("message", e => {
+          let m;
           try {
-            const m = JSON.parse(e.data);
-            if (m.message_id === 11) {
-              ctrl.state = m.session_state;
-              ctrl.phone = m.phone_type;
-            }
-            if ("is_h264_mode" in m) ctrl.boxMode = m.is_h264_mode;
-            ctrl.at = performance.now();
+            m = JSON.parse(e.data);
           } catch (err) {
-            // not a JSON control message
+            return; // not a JSON control message
           }
+          if (!m || typeof m !== "object") return;
+          ctrl.at = performance.now();
+          if (m.message_id === 11) {
+            if (m.session_state !== ctrl.state) ctrl.since = performance.now();
+            ctrl.state = m.session_state;
+            ctrl.phone = m.phone_type;
+          }
+          if ("is_h264_mode" in m) ctrl.boxMode = m.is_h264_mode;
+          // UPDATE_INFO: the size the box's session now has.
+          if (m.message_id === 14 && m.width > 0 && m.height > 0) sessionUpdated(m.width, m.height);
         });
       }
     };
@@ -216,6 +224,10 @@
     touchMap = map;
     touchSend = send;
   }
+  // Debug/test: the phone coordinates a tap at client (x, y) maps to.
+  function mapTouch(x, y) {
+    return touchMap ? touchMap({clientX: x, clientY: y}) : null;
+  }
 
   function countMove(e) {
     touchStats.moves++;
@@ -287,6 +299,98 @@
     return `Touch→frame ${Math.round(wake.last)} ms · avg ${Math.round(avg)} ms (${wake.samples.length})`;
   }
 
+  // INIT size. CarPlay fixes the phone's screen size when its session starts:
+  // the box sets a session up at the size of the last INIT it received and
+  // restarts it (~13 s phone reconnect) whenever a later INIT asks for another
+  // size. So restart only when it is wanted:
+  //   load:    the phone is already connected (session running): ask for the
+  //            size the box holds (this page's last INIT/UPDATE_INFO, else the
+  //            size remembered from an earlier page), so the first connection
+  //            is the only one. The bundle fits the picture to the window. The
+  //            box does not report its size before INIT, so a size remembered
+  //            from another client's session still costs one restart (then it
+  //            is relearned); a remembered small size from another layout stays
+  //            until a real resize (connecting once wins over resolution). It
+  //            relies on session_state arriving before INIT (the bundle waits
+  //            500 ms; first in every recording).
+  //   resize:  a real window resize that changed the window asks for the window
+  //            size (full resolution); an unchanged one keeps the box's size.
+  //   restart: a size other than the box's, on purpose: the no-video recovery,
+  //            and Apply with an H.264 <-> HEVC change (the phone renegotiates
+  //            the codec in the new session instead of needing a reconnect).
+  const SESSION_KEY = "zq.session";
+  let sessionSize = null; // {w, h} remembered from the last UPDATE_INFO (any page)
+  let boxSize = null; // what the box holds, as this page knows it: last INIT sent or UPDATE_INFO
+  let lastWindow = null; // the window-based size at this page's last INIT
+  try {
+    const v = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (v && v.w > 0 && v.h > 0) sessionSize = {w: v.w | 0, h: v.h | 0};
+  } catch (e) {
+    // none remembered
+  }
+  function sessionUpdated(w, h) {
+    boxSize = {w, h};
+    if (sessionSize && sessionSize.w === w && sessionSize.h === h) return;
+    sessionSize = {w, h};
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(sessionSize)); } catch (e) {} // this page only
+  }
+  // A reason applies to the INIT that follows it: the bundle sends that within
+  // 500 ms (resize debounce), so a reason no INIT picked up expires.
+  const REASON_TTL = 2000;
+  let pending = null; // {reason, at}
+  function requestInit(reason) {
+    pending = {reason, at: performance.now()};
+  }
+  // "Apply & reload" carries its reason to the next page load: "resize" for a
+  // new resolution or frame rate, "restart" for an H.264 <-> HEVC change.
+  const APPLY_KEY = "zq.init-reason";
+  let loadReason = "load";
+  try {
+    const r = sessionStorage.getItem(APPLY_KEY);
+    if (r === "resize" || r === "restart") loadReason = r;
+    sessionStorage.removeItem(APPLY_KEY);
+  } catch (e) {
+    // blocked: the reload reuses the box's size until the next real resize
+  }
+  function applyReason(reason) {
+    try { sessionStorage.setItem(APPLY_KEY, reason); } catch (e) {}
+  }
+  const same = (a, b) => !!a && !!b && a.w === b.w && a.h === b.h;
+  // Called by the patched bundle with the INIT size it computed (window based,
+  // capped and 16-aligned); returns the size to send.
+  function initSize(w, h) {
+    const fresh = pending && performance.now() - pending.at <= REASON_TTL;
+    // A carried "restart" (codec change) outranks a resize at load: the
+    // resize may end at the size the box already holds.
+    const reason = loadReason === "restart" ? "restart" : fresh ? pending.reason : loadReason;
+    pending = null;
+    loadReason = "load";
+    const win = {w, h};
+    const held = boxSize || (ctrl.state === 4 ? sessionSize : null);
+    let out;
+    if (reason === "restart") {
+      // Any size other than the box's makes it restart the session: the
+      // window's own size, or 2 px shorter when that is what it holds.
+      out = same(held, win) || !held ? {w, h: h - 2} : win;
+    } else if (reason === "resize" && !same(lastWindow, win)) {
+      out = win;
+    } else {
+      out = ctrl.state === 4 && held ? held : win;
+    }
+    boxSize = {w: out.w, h: out.h};
+    lastWindow = win;
+    touchSize = boxSize; // until this session's UPDATE_INFO gives the exact stream
+    // For the debug overlay: what the last INIT asked for, and why.
+    window.__zq.lastInit = {w: out.w, h: out.h, window: `${w}x${h}`, reason, state: ctrl.state};
+    return out;
+  }
+  // Touch clamp bounds (patched bundle ka()): the stream the bundle itself
+  // derives from UPDATE_INFO (streamFrame), else the size this page requested.
+  let touchSize = null;
+  function streamFrame(w, h) {
+    if (w > 0 && h > 0) touchSize = {w, h};
+  }
+
   window.__zq = {
     // multiplier applied by the player to the window size it requests
     get scale() {
@@ -308,12 +412,15 @@
     rawTouch,
     touchStats,
     touchSender,
+    mapTouch,
     wake,
     stats: null, // set once per second by the patched bundle from worker.js
     videoSocket,
     onWorkerSocket,
     workerGone,
-    nudge: 0, // px taken off the INIT height (patched bundle) to force a session restart
+    initSize, // INIT size policy (patched bundle), see above
+    streamFrame, // the bundle's UPDATE_INFO stream size (patched bundle)
+    touchBounds: () => touchSize, // touch clamp bounds (patched bundle ka()); null: stock
     kicks: 0,
   };
 
@@ -323,9 +430,9 @@
   // messages and the keyframe request gets no answer. A same-size INIT does
   // not help; an INIT with a different size makes the box restart the CarPlay
   // session, which recovers. So, when a running session's video socket has
-  // received nothing at all 8 s after opening, resend INIT 2 px shorter (or
-  // back), at most twice per page load, 20 s apart. A still screen after a
-  // working start is untouched: it has received messages.
+  // received nothing at all 8 s after opening, resend INIT with a different
+  // size (initSize "restart"), at most twice per page load, 20 s apart. A still
+  // screen after a working start is untouched: it has received messages.
   const KICK_AFTER = 8000;
   const KICK_INTERVAL = 20000;
   const KICK_LIMIT = 2;
@@ -336,17 +443,21 @@
     // HEVC only: the blackout has only been seen with HEVC, and an H.264 or JPEG
     // socket reopened on a still screen can legitimately wait for its first frame.
     if (!s || settings.sock !== "worker" || window.__zq.mode !== 2 || ctrl.state !== 4) return;
+    // The session must itself have run that long: the box restarts it after an
+    // INIT whose size differs from the session's, and a socket opened before
+    // that restart is already old when the new session starts sending.
+    if (now - ctrl.since < KICK_AFTER) return;
     // Video messages only: diagnostic reports (e.g. "zq dropped") are not video.
     if (s.sockState !== 1 || s.sockVideoMsgs !== 0 || !(s.sockAgeMs > KICK_AFTER)) return;
     if (window.__zq.kicks >= KICK_LIMIT || now - lastKick < KICK_INTERVAL) return;
     lastKick = now;
     window.__zq.kicks++;
-    window.__zq.nudge = window.__zq.nudge ? 0 : 2;
+    requestInit("restart");
     window.dispatchEvent(new Event("resize")); // the bundle's resize handler resends INIT
   }, 1000);
-  // A real resize already changes the size (and restarts the session): request
-  // the full height again. Registered before the bundle's own resize handler.
-  window.addEventListener("resize", e => { if (e.isTrusted) window.__zq.nudge = 0; });
+  // A real resize asks for the window size. Registered before the bundle's own
+  // resize handler; our synthetic kick event is not trusted.
+  window.addEventListener("resize", e => { if (e.isTrusted) requestInit("resize"); });
 
   const CSS = `
     /* CarPlay gets every touch: no browser pan/zoom gesture detection on the player */
@@ -494,6 +605,23 @@
 
     const draft = {...settings};
     let codecError = "";
+    // Which decode paths this browser supports (asked once, when the panel
+    // first opens). Chrome has no software HEVC decoder; H.264 may be either.
+    let decoderPaths = "";
+    function refreshDecoderPaths() {
+      const VD = window.VideoDecoder;
+      if (decoderPaths || !VD || !VD.isConfigSupported) return;
+      decoderPaths = "checking…";
+      const ask = (codec, hardwareAcceleration) => Promise.race([
+        Promise.resolve().then(() => VD.isConfigSupported({codec, hardwareAcceleration}))
+          .then(r => r.supported ? "✓" : "✗", () => "?"),
+        new Promise(resolve => setTimeout(() => resolve("?"), 1500)), // never settled: unknown
+      ]);
+      Promise.all([["HEVC", "hvc1.1.6.L120.B0"], ["H.264", "avc1.640020"]].map(([name, codec]) =>
+        Promise.all([ask(codec, "prefer-hardware"), ask(codec, "prefer-software")])
+          .then(([hw, sw]) => `${name} hw ${hw} sw ${sw}`)))
+        .then(parts => { decoderPaths = parts.join(" · "); updateInfo(); });
+    }
     function refreshCodecStatus() {
       if (!NATIVE_HEVC) return;
       fetch("/zq-codec.txt", {cache: "no-store"})
@@ -523,6 +651,13 @@
           url.searchParams.delete("zq-h264");
           history.replaceState(null, "", url.href);
         }
+        // H.264 <-> HEVC: restart the phone session so the codec switches now.
+        // JPEG keeps its documented disconnect/apply/reconnect procedure.
+        // Compared with the mode this page runs (the session HEVC fallback runs
+        // H.264 although HEVC is saved), which is the codec the session has.
+        const running = window.__zq.mode;
+        if (draft.vmode !== running && draft.vmode > 0 && running > 0) applyReason("restart");
+        else if (draft.res !== settings.res || draft.fps !== settings.fps) applyReason("resize");
         save(draft);
         location.reload();
       };
@@ -547,6 +682,10 @@
       if (hevcBlocked) lines.push(HEVC_NOTE);
       if (s && s.error) lines.push(`Decoder error ${s.error}`);
       if (s && s.nativeReports) lines.push(`Native ×${s.nativeReports}: ${s.nativeReport}`);
+      if (decoderPaths || (s && s.codec)) {
+        const running = s && s.codec ? ` · running ${codecName(s.codec) || s.codec} ${s.tuned ? "hardware-preferred" : "plain config"}` : "";
+        lines.push(`Decoder ${decoderPaths || "?"}${running}`);
+      }
       if (s && s.codec) {
         const name = codecName(s.codec);
         lines.push(`Stream ${s.size} ${name ? `${name} · ` : ""}${s.codec}`);
@@ -602,6 +741,7 @@
       if (open) {
         refreshWifi(updateInfo);
         refreshCodecStatus();
+        refreshDecoderPaths();
       }
     };
     document.body.append(panel); // the button lives in the vendor toolbar (see sync)

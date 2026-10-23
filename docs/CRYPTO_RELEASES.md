@@ -14,7 +14,7 @@ HEVC, including `--native-only`. Browser/Wi-Fi-only packages do not replace
 diagnostic package and `--restore-native` deliberately restores stock crypto.
 There is no silent scalar fallback for a failed HEVC/NEON composition.
 
-Versions are plain `2.9.11-ocN` (now `2.9.11-oc13`) for every package type; build
+Versions are plain `2.9.11-ocN` (now `2.9.11-oc15`) for every package type; build
 options are recorded in the package metadata. Increment `oc` for subsequent releases.
 Do not reuse a stock version. A source/version change does not update the device.
 
@@ -32,8 +32,8 @@ build/crypto-env/bin/pip install -r tools/requirements-crypto-neon.txt
 build/crypto-env/bin/python -I tools/build_patch.py \
   --firmware build/stock_2.9.11.zip \
   --native-hevc --native-video-diag --keep-compressed-video-focus \
-  --version 2.9.11-oc13 \
-  --out build/update_tesla_hevc_2.9.11-oc13.zip
+  --version 2.9.11-oc15 \
+  --out build/update_tesla_hevc_2.9.11-oc15.zip
 ```
 
 Missing public sources/license are fetched from the pinned

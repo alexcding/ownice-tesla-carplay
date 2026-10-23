@@ -11,7 +11,7 @@ JPEG/H.264/HEVC setting. HEVC playback is verified on the owner's T3 in **Mac Ch
 and in the **Tesla browser** (owner photos: `hvc1.1.6.L123.B0`, 1392x1080, 18–38 fps,
 0 resyncs). Broader hardware compatibility remains untested.
 
-Current build version: **2.9.11-oc13** (plain `-ocN` for every variant; options are in
+Current build version: **2.9.11-oc15** (plain `-ocN` for every variant; options are in
 the package's `zq-build.txt`). The owner's adapter runs **2.9.11-oc12**. Extended
 idle/return and the HEVC blackout after a long player absence remain under
 validation. See the [diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md) for the exact evidence.
@@ -74,12 +74,16 @@ long idle/return, Tesla playback and live recovery testing remain pending.
 
 - **HEVC black screen after the phone ran with no player open for a while** (browser
   closed, leaving the car, adapter booted before the page opened), even though a page
-  reload recovers. oc13 restarts the CarPlay session automatically when a running
+  reload recovers. Since oc13 the player restarts the CarPlay session automatically when a running
   session's video connection receives nothing for 8 s (at most twice per page load);
   otherwise restart CarPlay on the phone. H.264 is reported unaffected.
 - **Expanding from the side window to full screen** showed a small, unclickable
   picture until the window was restored. Fixed since oc12 (confirmed on Mac Chrome;
   awaiting in-car confirmation).
+- **Opening the player restarted the phone session** (one or two extra ~13 s reconnects)
+  when the player asked for a different size than the running session. oc14 reuses the
+  running session's size when the page opens (resizing still restarts for full
+  resolution), and its recovery waits for the session itself to run 8 s without video.
 - Changing H.264 / HEVC needs a phone reconnect; Chrome without a hardware HEVC
   decoder falls back to H.264 automatically.
 
@@ -109,8 +113,8 @@ Experimental complete HEVC package, including the latest browser cleanup fix:
 python3 -m venv build/crypto-env
 build/crypto-env/bin/pip install -r tools/requirements-crypto-neon.txt
 build/crypto-env/bin/python -I tools/build_patch.py --native-hevc --native-video-diag \
-  --keep-compressed-video-focus --version 2.9.11-oc13 \
-  --out build/update_tesla_hevc_2.9.11-oc13.zip
+  --keep-compressed-video-focus --version 2.9.11-oc15 \
+  --out build/update_tesla_hevc_2.9.11-oc15.zip
 ```
 
 Native builds additionally need an ARM-capable Clang/LLD toolchain; see
@@ -129,7 +133,7 @@ other features. Stock restore is an intentional exception. This package patches
 and includes the browser/TLS files. It can be installed directly over the supported stock
 2.9.11 base; earlier experimental packages are not prerequisites. Every package type is
 named plain `2.9.11-ocN` (no feature suffixes). The release command above sets
-`2.9.11-oc13` and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
+`2.9.11-oc15` and includes temporary delivery checkpoints. **Do not use `--native-only` for a first complete installation**:
 that option deliberately preserves the installed browser/TLS/Wi-Fi files.
 
 A new browser profile defaults to H.264. In Video, select a codec, use **Apply & reload**,
@@ -145,7 +149,7 @@ After reviewing the package and explicitly authorizing the device update, join t
 box's network (or use an existing route to it) and upload the chosen package:
 
 ```sh
-tools/flash.sh update build/update_tesla_hevc_2.9.11-oc13.zip
+tools/flash.sh update build/update_tesla_hevc_2.9.11-oc15.zip
 tools/flash.sh status
 ```
 
@@ -196,7 +200,7 @@ open -na "Google Chrome" --args --user-data-dir=/tmp/zbox-chrome --no-proxy-serv
 
 | Script | Purpose |
 |---|---|
-| `tools/build_patch.py` | build the update package (default 2.9.11-oc13; native HEVC includes NEON) |
+| `tools/build_patch.py` | build the update package (default 2.9.11-oc15; native HEVC includes NEON) |
 | `tools/flash.sh` | flash / roll back over the web UI: `status`, `update [zip]`, `rollback [zip]` |
 | `tools/dev_player.py` | test the patched player against a live box without flashing (local HTTPS proxy) |
 | `tools/box_info.sh` | read-only status: firmware version, channel, Wi-Fi, certificate expiry |

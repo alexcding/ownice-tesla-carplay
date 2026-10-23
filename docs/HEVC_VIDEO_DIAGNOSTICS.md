@@ -730,7 +730,7 @@ confirms the oc12 resize fix on Mac Chrome.
 **oc13 automatic recovery (`zq-settings.js`, browser only).** Recovery fires when
 the box reports a running session (`session_state 4`), the worker-owned video
 socket is open, and it has received **no message at all** 8 s after opening. The
-page then resends `INIT` 2 px shorter, or back (`__zq.nudge`, a strict
+page then resends `INIT` with a different size (oc14: `__zq.initSize`; oc13 used a 2 px `__zq.nudge`), via a strict
 `player_patches.py` replacement), so the box restarts the session. At most twice
 per page load, 20 s apart. A still screen after a working start is untouched,
 because it has received messages. The overlay shows `restarts N`. In one live run
@@ -788,7 +788,7 @@ Follow-up `/code-review high` fixes (also before packaging):
 
 - The no-video recovery runs in **HEVC mode only**. In H.264 or JPEG mode a socket
   reopened on a still screen may legitimately wait for its first frame. A real
-  (trusted) window resize resets the 2 px nudge, so the next INIT asks for the
+  (trusted) window resize resets the 2 px nudge (oc13; replaced in oc14), so the next INIT asks for the
   full height.
 - H.264 decoder refusals no longer block H.264 until a reload. H.264 has no page
   fallback, so after both of its configs (tuned, plain) are refused in a row it
@@ -805,3 +805,112 @@ Follow-up `/code-review high` fixes (also before packaging):
 black screen". This is a subjective owner report: the restart count, timings and
 which scenarios were exercised were not recorded. Extended idle/return and the
 side-window → full-screen check in the car remain to be confirmed explicitly.
+
+
+#### 2026-10-22: oc14, one connection when the phone connects first
+
+Recorded on Mac Chrome through the proxy (CDP console + checkpoint
+`Last-Modified` = time since boot), phone connected before any player:
+
+1. Before the player opened, the box had issued a keyframe request but the phone
+   sent no frames. That is expected with no player connected.
+2. The player's first `INIT` made the **box end the session** (`session_state 6`
+   about 3 s later). The phone reconnected about 13 s later (`3 → 4`). Cause: the box
+   sets a phone session up at the size of the **last INIT it received** and
+   restarts it when a later INIT asks for another size. The remembered size came
+   from another client (the car, or the Mac) and from oc13's 2 px recovery nudge.
+   This is stock behaviour: CarPlay fixes the phone's screen size per session.
+3. oc13's recovery then fired **as soon as** the session returned to 4. It measured
+   the video socket's age (15 s, all spent in the restart), not the session's.
+   The new session was already delivering (frames, `zq events … 504`, UPDATE_INFO),
+   and the nudged INIT ended it: a third connection. The owner saw the same in the
+   Tesla ("restarts twice").
+
+oc14 (player only):
+
+- **INIT size policy** (`__zq.initSize`, one strict bundle replacement after the
+  stock cap/16-alignment). When the page opens while a session is running, it
+  sends the running session's size, remembered from the box's `UPDATE_INFO`
+  (`message_id 14`, localStorage `zq.session`). The box keeps the session and the
+  bundle fits the picture to the window. A real (trusted) resize sends the window
+  size, so full resolution needs one restart, as before. The recovery sends a size
+  that differs from the session's (2 px shorter, or back to the window size). This
+  replaces the oc13 nudge.
+- **Recovery timing:** the session itself must have run 8 s (`session_state`
+  change time) with no video message, not just the socket.
+
+Live check (proxy, phone connected, page reload): no session restart, HEVC
+1328x658 about 4 s after load, 54–59 fps, `restarts 0`. The phone-first run before
+the fix had video only after 35 s and three connections.
+
+`/code-review high` of the oc14 change:
+
+- **Fixed:** "Apply & reload" with a new resolution or frame rate now requests
+  the settings' size once (a `sessionStorage` flag) instead of reusing the session
+  size.
+- **Fixed:** the recovery asks for the window's own size (2 px shorter when that
+  equals the session's), never a mix of the session's width and the window's
+  height that would then be remembered.
+- **Fixed:** an unchanged UPDATE_INFO does not rewrite storage.
+- **Limits, documented:** the box does not report its size before `INIT`, so a
+  size remembered from a session another client started still costs one restart
+  (then it is relearned). Reuse relies on `session_state` arriving before `INIT`.
+  The bundle waits 500 ms, and the state arrived first in every recording.
+- **Not changed:** the hook runs after the stock height cap and 16-alignment,
+  and the box echoed the reused (1328x658) and recovery (1328x656) sizes exactly.
+  `rf()` is the only INIT sender, so each resize consumes its reason once.
+
+#### 2026-10-22: oc15, touch reaches the whole stream
+
+Owner report (Mac proxy, Resolution set high): with a reused **2912x1440**
+session in a 1328x657 window (Resolution 1080, scale 1.64), the CarPlay home
+button at the bottom of the left dock could not be tapped. The stock touch mapping
+`ka()` clamps to `Pc()` = window x scale (≈2184x1080), which equalled the stream
+size only while every INIT restarted the session at that size. With oc14's
+session-size reuse the stream can be larger, so taps below y ≈ 493 px were clamped
+to phone y = 1080, and similarly on the right.
+
+Fix (`tools/player_patches.py`, the existing `ka()` replacement): the clamp
+bounds are the stream size from **this page's** `UPDATE_INFO`
+(`__zq.touchBounds`), with stock window x scale until it arrives. Verified live:
+the bottom-left tap (30, 637) maps to (66, 1397) of 2912x1440 (was clamped to
+y = 1080), and the centre (664, 328.5) to (1456, 722); the regression test taps (664, 328), which gives 719. The owner confirmed the home button works.
+Regression: `tools/test_player_focus.mjs` runs the patched vendor `ka()`.
+`__zq.mapTouch(x, y)` and `__zq.lastInit` (INIT size, window, reason, session
+state) are exposed for debugging.
+
+`/code-review` of oc15 (fixed before packaging):
+
+- **Recovery size:** the restart size is now compared with what the box holds
+  (this page's last INIT, then UPDATE_INFO), not with the remembered size. A stale
+  remembered size plus an early window-size INIT could otherwise resend the box's
+  own size, and nothing would restart.
+- **Resizes:** a trusted resize restarts only if the window size actually changed.
+  Reasons ("resize", "restart") expire after 2 s if no INIT follows (the bundle
+  sends one within 500 ms).
+- **Touch bounds:** taken from the bundle's own UPDATE_INFO values (`Q`/`ae`, which
+  are content size for some phone types) through a strict patch
+  (`__zq.streamFrame`). They are set to the requested size when an INIT is sent,
+  and CarLife wireless keeps stock bounds. The test extracts `ka()` by its end
+  before the Home component and covers CarLife.
+- **Control messages:** JSON parsing is isolated from handling, so handler errors
+  are no longer swallowed as "not JSON".
+
+New in oc15 (both unvalidated on a device):
+
+- **Codec change without a manual reconnect:** Apply with H.264 ↔ HEVC (and the
+  automatic HEVC → H.264 fallback) requests a size other than the box's, so the box
+  restarts the phone session and the phone renegotiates the codec. JPEG keeps its
+  documented disconnect/apply/reconnect procedure.
+- **Decoder line in the Video panel:** `isConfigSupported` for HEVC/H.264 ×
+  `prefer-hardware`/`prefer-software`, plus whether the running decoder got the
+  hardware-preferred low-latency config or the plain one. Chrome has no software
+  HEVC decoder, so HEVC in the Tesla is necessarily hardware-decoded. This line shows
+  whether H.264 there is software, a candidate explanation for HEVC feeling
+  slightly behind H.264 in the car (hypothesis).
+
+Independent review of the oc15 player changes (REWORK, fixed): Apply compares a
+codec change with the mode the page runs (`__zq.mode`), not the saved one, so
+"HEVC (retry)" from the session H.264 fallback restarts the session. A carried
+"restart" outranks a resize at load. The panel's decoder-path probes time out
+after 1.5 s ("?").

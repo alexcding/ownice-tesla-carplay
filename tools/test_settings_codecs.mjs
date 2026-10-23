@@ -150,29 +150,83 @@ r = await hevcLoad(); assert.equal(r.window.__zq.mode, 1); // no VideoDecoder
 r = await hevcLoad({probe: Error("temporary")}); assert.equal(r.window.__zq.mode, 2);
 console.log("Startup gates INIT, blocked storage falls back once, and transient refusals do not permanently ban HEVC.");
 
-// No-video recovery: a running session whose video socket got nothing 8 s after
-// opening resends INIT 2 px shorter (a size change restarts the box session),
-// at most twice, 20 s apart; still screens with earlier messages are left alone.
-async function recoveryPage(vmode) {
+// INIT size policy and no-video recovery. The page's window gives 1328x658;
+// dispatchEvent stands in for the bundle's resize handler, which asks
+// __zq.initSize for the INIT size it will send.
+const WIN = {w: 1328, h: 658};
+const plain = v => JSON.parse(JSON.stringify(v));  // sandbox objects compare by value
+async function recoveryPage(vmode, store = {}) {
   const intervals = [], resizes = [], listeners = {};
   let now = 0, ctrlSocket = null;
   class FakeSocket { constructor(url) { this.url = url; this.listeners = []; if (/:9002/.test(url)) ctrlSocket = this; }
     addEventListener(type, fn) { if (type === "message") this.listeners.push(fn); } }
   const window = {WebSocket: FakeSocket, VideoDecoder: {isConfigSupported: async () => ({supported: true})},
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
-    dispatchEvent(e) { resizes.push([e.type, window.__zq.nudge]); }};
+    dispatchEvent(e) { resizes.push(plain(window.__zq.initSize(WIN.w, WIN.h))); }};
   const context = vm.createContext({
     window, URL, Event: class { constructor(type) { this.type = type; } }, setTimeout, clearTimeout,
     location: {href: "https://box/player.html"}, navigator: {maxTouchPoints: 0},
     performance: {now: () => now}, document: {body: null, addEventListener() {}},
-    localStorage: {getItem: () => JSON.stringify({vmode})}, setInterval(fn) { intervals.push(fn); },
+    localStorage: {getItem: key => key === "zq.session" ? store.session ?? null : JSON.stringify({vmode}),
+      setItem: (key, value) => { if (key === "zq.session") store.session = value; }},
+    sessionStorage: {getItem: key => store[key] ?? null, setItem: (key, value) => { store[key] = value; },
+      removeItem: key => { delete store[key]; }},
+    setInterval(fn) { intervals.push(fn); },
   });
   vm.runInContext(source.replace("const NATIVE_HEVC = false;", "const NATIVE_HEVC = true;"), context);
   await window.__zq.hevcReady;
   new window.WebSocket("wss://zbox.link:9002");  // the bundle's control socket, through the wrapper
-  return {window, resizes, listeners, session: state => ctrlSocket.listeners.forEach(fn =>
-    fn({data: JSON.stringify({message_id: 11, session_state: state, phone_type: 5})})),
-    tick: (ms, stats) => { now += ms; window.__zq.stats = stats; intervals.forEach(fn => fn()); }};
+  const ctrl = m => ctrlSocket.listeners.forEach(fn => fn({data: JSON.stringify(m)}));
+  return {window, resizes, listeners, store,
+    session: state => ctrl({message_id: 11, session_state: state, phone_type: 5}),
+    updateInfo: (width, height) => ctrl({message_id: 14, width, height}),
+    tick: (ms, stats = window.__zq.stats) => { now += ms; window.__zq.stats = stats; intervals.forEach(fn => fn()); }};
+}
+{
+  // Each initSize call is an INIT the bundle sends. Opening the player while
+  // the phone is connected reuses the box's size (no phone reconnect).
+  const first = await recoveryPage(2);
+  first.updateInfo(1328, 600);  // a session at 1328x600 (remembered)
+  assert.equal(first.store.session, JSON.stringify({w: 1328, h: 600}));
+  const init = (page, w = WIN.w, h = WIN.h) => plain(page.window.__zq.initSize(w, h));
+  const fresh = await recoveryPage(2, first.store);
+  assert.deepEqual(init(fresh), WIN);  // no running session yet: the window
+  const next = await recoveryPage(2, first.store);
+  next.session(4);
+  assert.deepEqual(init(next), {w: 1328, h: 600});  // reuse: no restart
+  next.listeners.resize.forEach(fn => fn({isTrusted: true}));  // a resize that changed nothing
+  assert.deepEqual(init(next), {w: 1328, h: 600});
+  next.listeners.resize.forEach(fn => fn({isTrusted: true}));  // a real resize
+  assert.deepEqual(init(next, 1400, 700), {w: 1400, h: 700});
+  assert.deepEqual(plain(next.window.__zq.touchBounds()), {w: 1400, h: 700});  // bounds follow the INIT
+  next.window.__zq.streamFrame(1392, 700);  // ...then the bundle's UPDATE_INFO stream
+  assert.deepEqual(plain(next.window.__zq.touchBounds()), {w: 1392, h: 700});
+  next.listeners.resize.forEach(fn => fn({isTrusted: false}));  // synthetic: not a user resize
+  assert.deepEqual(init(next, 1500, 750), {w: 1400, h: 700});  // keeps what the box holds
+  next.listeners.resize.forEach(fn => fn({isTrusted: true}));
+  next.tick(3000);  // no INIT followed within 2 s: the reason expired
+  assert.deepEqual(init(next, 1500, 750), {w: 1400, h: 700});
+  // Apply & reload: a new resolution asks for the settings' size once; a codec
+  // change asks for a size other than the box's (the phone renegotiates).
+  next.store["zq.init-reason"] = "resize";
+  const applied = await recoveryPage(2, next.store);
+  applied.session(4);
+  assert.deepEqual(init(applied), WIN);
+  assert.equal(next.store["zq.init-reason"], undefined);
+  assert.deepEqual(init(applied), WIN);  // only once: then the box's size again
+  next.store["zq.init-reason"] = "restart";
+  const codec = await recoveryPage(2, next.store);
+  codec.session(4);
+  codec.updateInfo(1328, 658);
+  assert.deepEqual(init(codec), {w: 1328, h: 656});
+  // A carried restart outranks a resize at load that ends at the box's size.
+  next.store["zq.init-reason"] = "restart";
+  const resized = await recoveryPage(2, next.store);
+  resized.session(4);
+  resized.updateInfo(1328, 658);
+  resized.listeners.resize.forEach(fn => fn({isTrusted: true}));
+  assert.deepEqual(init(resized), {w: 1328, h: 656});
+  console.log("INIT reuses the box's size; real resizes, new resolutions and codec changes request what they need.");
 }
 {
   const page = await recoveryPage(1);  // H.264: a reopened socket may wait for its first frame
@@ -181,7 +235,7 @@ async function recoveryPage(vmode) {
   assert.deepEqual(page.resizes, []);
 }
 {
-  const {window, resizes, listeners, session, tick} = await recoveryPage(2);
+  const {window, resizes, session, updateInfo, tick} = await recoveryPage(2);
   const dead = age => ({sockState: 1, sockMsgs: 4, sockVideoMsgs: 0, sockAgeMs: age});  // reports only
   session(4);
   tick(1000, dead(5000));
@@ -191,18 +245,41 @@ async function recoveryPage(vmode) {
   session(6); tick(1000, dead(9000));
   assert.deepEqual(resizes, []);  // no running session
   session(4); tick(1000, dead(9000));
-  assert.deepEqual(resizes, [["resize", 2]]);
+  assert.deepEqual(resizes, []);  // the session has only run 1 s
+  tick(8000, dead(17000));
+  assert.deepEqual(resizes, [{w: 1328, h: 656}]);  // a size other than the session's
+  updateInfo(1328, 656);  // the box restarted the session at that size
   tick(5000, dead(14000));
   assert.equal(resizes.length, 1);  // 20 s between restarts
   tick(20000, dead(9000));
-  assert.deepEqual(resizes, [["resize", 2], ["resize", 0]]);
+  assert.deepEqual(resizes, [{w: 1328, h: 656}, {w: 1328, h: 658}]);  // differs again: back to full
+  // A reused session of another size: the kick asks for the window's own size,
+  // never a mix of the session's width and the window's height.
+  const mixed = await recoveryPage(2, {session: JSON.stringify({w: 1200, h: 600})});
+  mixed.session(4);
+  mixed.tick(9000, dead(9000));
+  assert.deepEqual(mixed.resizes, [WIN]);
   tick(30000, dead(9000));
   assert.equal(resizes.length, 2);  // at most twice per page load
   assert.equal(window.__zq.kicks, 2);
-  window.__zq.nudge = 2;
-  listeners.resize.forEach(fn => fn({isTrusted: false}));
-  assert.equal(window.__zq.nudge, 2);  // our own synthetic resize keeps the nudge
-  listeners.resize.forEach(fn => fn({isTrusted: true}));
-  assert.equal(window.__zq.nudge, 0);  // a real resize asks for the full height again
+  // Recorded 2026-10-22: the box ended the session after the first INIT and the
+  // phone came back 13 s later while the (older) socket was still empty: no kick
+  // until the new session itself has run 8 s without video.
+  const fresh = await recoveryPage(2);
+  fresh.session(4); fresh.session(6);
+  fresh.tick(13000, {sockState: 1, sockMsgs: 0, sockVideoMsgs: 0, sockAgeMs: 15000});
+  fresh.session(4);
+  fresh.tick(1000, {sockState: 1, sockMsgs: 0, sockVideoMsgs: 0, sockAgeMs: 16000});
+  assert.deepEqual(fresh.resizes, []);  // the session started 1 s ago
+  fresh.tick(8000, {sockState: 1, sockMsgs: 0, sockVideoMsgs: 0, sockAgeMs: 24000});
+  assert.equal(fresh.resizes.length, 1);
+  // Review case: a stale remembered 1200x600, but this page's INIT (sent before
+  // session_state arrived) gave the box the window size. The recovery must
+  // differ from what the box holds, not from the remembered size.
+  const early = await recoveryPage(2, {session: JSON.stringify({w: 1200, h: 600})});
+  early.window.__zq.initSize(WIN.w, WIN.h);  // load INIT before session_state: window size
+  early.session(4);
+  early.tick(9000, {sockState: 1, sockMsgs: 0, sockVideoMsgs: 0, sockAgeMs: 9000});
+  assert.deepEqual(early.resizes, [{w: 1328, h: 656}]);
   console.log("No-video recovery restarts a dead session twice at most and leaves still screens alone.");
 }

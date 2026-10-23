@@ -718,6 +718,7 @@ setInterval(() => {
     socket: !!socket,
     codec,
     error: lastError,
+    tuned, // decoder configured with optimizeForLatency + prefer-hardware (false: plain)
     nativeReport: stats.nativeReport || "",
     nativeReports: stats.nativeReports || 0,
     hevcUnsupported,
