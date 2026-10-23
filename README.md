@@ -6,6 +6,8 @@ re-encoded, upscaled 720p JPEG stream at 30 fps. This project turns it into a
 **full-resolution, hardware-decoded H.264 or HEVC stream at up to 60 fps**, with lower
 latency, faster encryption, recovery from black screens, and a settings panel in the car.
 
+![CarPlay streamed as HEVC (1936×1080) in the browser, with the video diagnostics overlay](docs/images/carplay-hevc.jpg)
+
 **Latest release: [2.9.11-oc15](https://github.com/alexcding/ownice-tesla-carplay/releases/tag/2.9.11-oc15)**
 for the Ownice T3 on stock **2.9.11 / build 202402031913**. It installs through the
 adapter's own web page, no terminal needed.
