@@ -579,7 +579,8 @@ class NativeHEVCTests(unittest.TestCase):
             for _ in range(10):
                 self.assertNotEqual(m.frame(b""), 0)
                 self.assertEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
-            self.assertEqual(len(m.reports), 11)
+            self.assertEqual(len(m.reports), 21)  # each streak: drop report, then events
+            self.assertTrue(m.reports[-2].startswith("zq dropped flags=00010304 err=ffffe59c len=00000000"))
             self.assertIn("flags=00010304", m.reports[-1])  # good frame reset streak
             # Even a complete counter wrap must retain the pending report.
             m.put32(m.context + 20, 0xffff0104)
@@ -587,6 +588,21 @@ class NativeHEVCTests(unittest.TestCase):
             self.assertEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
             self.assertIn("flags=00000304", m.reports[-1])
             self.assertEqual(len(m.allocations), 1)
+
+    def test_diagnostic_converter_reports_a_blackout_without_good_frames(self):
+        self.require_diagnostics()
+        m = Machine("libScreenStream.so", 0x18000000)
+        m.property("widthPixels", 1392); m.property("heightPixels", 1080)
+        self.assertNotEqual(m.property("avcc", hvcc(3)), 0)  # rejected: no header, every frame drops
+        for _ in range(70):
+            self.assertNotEqual(m.frame(packet(b"\x26\x01\xaa")), 0)
+        self.assertEqual(len(m.reports), 3)  # drops 1, 33 and 65
+        self.assertEqual(m.sent, [])
+        # 0x4200: config rejected as malformed (code 5) plus pending drops
+        for report, streak in zip(m.reports, (1, 0x21, 0x41)):
+            self.assertTrue(report.startswith(f"zq dropped flags={streak:04x}4200 err=ffffe59c len=00000007"), report)
+            self.assertIn("header=00000000 size=05700438", report)
+        self.assertEqual(len(m.allocations), 0)
 
     def test_bounded_random_malformed_input(self):
         m = Machine("libScreenStream.so", 0x18000000)

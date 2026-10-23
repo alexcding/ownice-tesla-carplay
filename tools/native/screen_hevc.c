@@ -1,5 +1,6 @@
 /* Adapter for the observed stock 2.9.11 ScreenStream ABI. */
 #include "hevc_codec.h"
+#include "zq_report.h"
 extern void free(void *);
 extern void *ScreenStreamGetContext(void *);
 extern int CFEqual(const void *, const void *);
@@ -29,16 +30,18 @@ static void zq_num(char *out, unsigned *at, const char *label, unsigned v) {
     for (unsigned i = 0; i < 8; ++i)
         out[(*at)++] = "0123456789abcdef"[(v >> (28 - 4 * i)) & 15];
 }
-static void zq_report(struct screen_context *s, uint64_t ticks) {
+static void zq_report(struct screen_context *s, unsigned flags, uint64_t ticks,
+                      const char *label, int err, size_t len) {
     uint8_t sei[128];
     char *text = (char *)sei + 24;
     unsigned at = 0;
-    const char *label = "zq events";
     while (*label) text[at++] = *label++;
-    zq_num(text, &at, " flags=", s->nal_flags);
+    zq_num(text, &at, " flags=", flags);
+    zq_num(text, &at, " err=", (unsigned)err);
+    zq_num(text, &at, " len=", (unsigned)len);
     zq_num(text, &at, " header=", (unsigned)s->header_len);
     zq_num(text, &at, " size=", (unsigned)s->width << 16 | ((unsigned)s->height & 0xffff));
-    const char *uuid = "ownice-zq-diag01";
+    const char *uuid = ZQ_REPORT_UUID;
     sei[0] = sei[1] = sei[2] = 0; sei[3] = 1;
     sei[4] = 39 << 1; sei[5] = 1;
     sei[6] = 5; sei[7] = (uint8_t)(16 + at);
@@ -53,7 +56,7 @@ static void zq_report(struct screen_context *s, uint64_t ticks) {
  * Dropped-frame count wraps (never saturates); bit 9 retains pending drops
  * even at an exact multiple of 65536. Good frames clear the entire streak. */
 static void zq_config_event(struct screen_context *s, unsigned result) {
-    s->nal_flags |= (1u << (result + 9));
+    __atomic_fetch_or(&s->nal_flags, 1u << (result + 9), __ATOMIC_RELAXED);
 }
 #endif
 int zq_screen_property(void *stream, unsigned flags, const void *key,
@@ -86,7 +89,12 @@ int zq_screen_property(void *stream, unsigned flags, const void *key,
 #endif
         if (err) return err;
         s->header = c.header; s->header_len = c.header_len;
-        s->nal_flags = (s->nal_flags & ~0x1ffu) | c.length_size | (c.hevc << 8);
+        /* The frame thread updates the same word (diagnostic counters): swap in
+         * the format bits without losing a concurrent update (ldrex/strex). */
+        unsigned old = __atomic_load_n(&s->nal_flags, __ATOMIC_RELAXED);
+        while (!__atomic_compare_exchange_n(&s->nal_flags, &old,
+                                            (old & ~0x1ffu) | c.length_size | (c.hevc << 8),
+                                            1, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {}
         return 0;
     }
     int width = CFEqual(key, zq_width());
@@ -113,22 +121,31 @@ int zq_screen_frame(void *stream, const uint8_t *data, size_t len,
     size_t n = 0;
     int err = -6756;
     if (s) {
-        struct zq_codec c = {s->header, s->header_len,
-                             s->nal_flags & 255, (s->nal_flags >> 8) & 1};
+        unsigned flags = __atomic_load_n(&s->nal_flags, __ATOMIC_ACQUIRE);
+        struct zq_codec c = {s->header, s->header_len, flags & 255, (flags >> 8) & 1};
         err = zq_codec_frame(&c, data, len, &out, &n);
         if (!err) {
             ScreenStreamSend_CB(out, n, s->width, s->height, ticks);
 #ifdef ZQ_DIAG
-            if (s->nal_flags & ~0x1ffu) {
-                zq_report(s, ticks);
-                s->nal_flags &= 0x1ffu;
+            /* Take the pending events and clear the streak in one atomic step. */
+            if (flags & ~0x1ffu) {
+                unsigned taken = __atomic_fetch_and(&s->nal_flags, 0x1ffu, __ATOMIC_RELAXED);
+                if (taken & ~0x1ffu) zq_report(s, taken, ticks, "zq events", 0, 0);
             }
 #endif
         }
 #ifdef ZQ_DIAG
         else {
-            s->nal_flags += 1u << 16; /* unsigned wrap, never stop recording */
-            s->nal_flags |= 1u << 9;
+            /* Count the drop (streak in bits 16-31, unsigned wrap, never stops
+             * recording), then mark drops pending (bit 9); `now` is the word
+             * after both updates. */
+            __atomic_fetch_add(&s->nal_flags, 1u << 16, __ATOMIC_RELAXED);
+            unsigned now = __atomic_or_fetch(&s->nal_flags, 1u << 9, __ATOMIC_RELAXED);
+            /* A blackout has no good frame to carry the deferred events: report
+             * the first drop of a streak and every 32nd, from this same frame
+             * callback, once the stream has its dimensions. */
+            if (s->width && s->height && ((now >> 16) & 31) == 1)
+                zq_report(s, now, ticks, "zq dropped", err, len);
         }
 #endif
     }

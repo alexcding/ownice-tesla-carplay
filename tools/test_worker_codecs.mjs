@@ -54,7 +54,6 @@ console.log("AVC gaps detected; HEVC bypasses AVC checks; AVC fallback and both 
 
 // Every HEVC decoder config refused: flagged for the page instead of looping.
 vm.runInContext(`
-  var refusals = 0;
   VideoDecoder = class {
     constructor(init) { this.init = init; }
     configure() { const init = this.init; Promise.resolve().then(() =>
@@ -85,21 +84,57 @@ console.log("Refused HEVC configs (tuned, plain hvc1, hev1) flag HEVC as unsuppo
   console.log("Native converter reports are shown and never decoded; other SEI is untouched.");
 }
 
-// Keep feeding an unsupported stream well beyond retry/keyframe deadlines.
-// Neither incoming SPS nor timeout recovery may reopen the decoder/socket.
+// Keep feeding an unsupported HEVC stream well beyond retry/keyframe deadlines.
+// Neither incoming parameter sets nor timeout recovery may reopen the decoder/socket.
+context.hevcIrap = Uint8Array.from([...nal(0x40, 1, 0xaa), ...hevcSps, ...nal(0x26, 1, 0x80)]);
+context.hevcDelta = Uint8Array.from(nal(2, 1, 0xff));
 vm.runInContext(`
   var stoppedResyncs = stats.resyncs;
   var stoppedOpens = 0;
-  VideoDecoder = class { constructor() { stoppedOpens++; } };
+  VideoDecoder = class { constructor(init) { stoppedOpens++; this.init = init; } configure() {} close() {} };
   performance.now = () => 60000;
-  for (let i = 0; i < 100; i++) { decodeH264(input, 60000 + i * 4000); resync("timeout", true); }
+  for (let i = 0; i < 100; i++) {
+    decodeH264(i % 10 ? hevcDelta : hevcIrap, 60000 + i * 4000); resync("timeout", true);
+  }
 `, context);
 assert.equal(vm.runInContext("stats.resyncs === stoppedResyncs && stoppedOpens === 0 && retryTimer === 0", context), true);
+// The phone reconnects with H.264 (the page fell back): it must decode, with
+// the latency/hardware hints back on despite the HEVC refusals.
+// The phone's SPS may use any nal_ref_idc: 0x27 must also leave HEVC mode.
+context.avcIdr = Uint8Array.from([...sps.slice(0, 4), 0x27, ...sps.slice(5), ...avcSlice(0, true)]);
+vm.runInContext(`var avcTuned = null, avcChunks = 0; EncodedVideoChunk = class {};
+  VideoDecoder = class { constructor(init) { stoppedOpens++; this.init = init; this.decodeQueueSize = 0; }
+  configure(c) { avcTuned = !!c.optimizeForLatency; } decode() { avcChunks++; } close() {} }; decodeH264(avcIdr, 200000);`, context);
+assert.equal(vm.runInContext("avcChunks", context), 1);
+assert.equal(vm.runInContext("stoppedOpens === 1 && /^avc1\\./.test(codec) && avcTuned", context), true);
+console.log("Unsupported HEVC stays stopped; a later H.264 stream decodes with the tuned config.");
+
+// Refusals only count in a row: decoded output in between resets the count,
+// so occasional refusals (e.g. new sizes after resizes) never ban HEVC.
+vm.runInContext(`
+  hevcUnsupported = false; tuned = true; hevcTag = "hvc1"; refusals = 0; refusedFamily = "";
+  var refuseNext = true;
+  VideoDecoder = class {
+    constructor(init) { this.init = init; }
+    configure() { if (refuseNext) throw {name: "NotSupportedError", message: "refused"}; }
+    close() {}
+  };
+  onDecoded = frame => {};
+  for (let round = 0; round < 5; round++) {
+    refuseNext = true; lastResync = -Infinity; openDecoder("hvc1.1.6.L120.B0");
+    lastResync = -Infinity; openDecoder(hevcTag + ".1.6.L120.B0");
+    refuseNext = false; lastResync = -Infinity; openDecoder(hevcTag + ".1.6.L120.B0");
+    decoder.init.output({close() {}});
+  }
+`, context);
+assert.equal(vm.runInContext("hevcUnsupported", context), false);
+assert.equal(vm.runInContext("refusals", context), 0);
+console.log("Ten refusals spread over five successful sessions do not ban HEVC.");
 
 // configure() can also throw synchronously. It must follow the same three
 // attempts, then stop. A good output clears the panel's transient error.
 vm.runInContext(`
-  hevcUnsupported = false; tuned = true; hevcTag = "hvc1";
+  hevcUnsupported = false; tuned = true; hevcTag = "hvc1"; refusals = 0; refusedFamily = "";
   VideoDecoder = class {
     constructor(init) { this.init = init; }
     configure() { throw {name: "NotSupportedError", message: "sync refusal"}; }
@@ -122,3 +157,36 @@ vm.runInContext(`
 `, context);
 assert.equal(vm.runInContext("lastError", context), "");
 console.log("Unsupported streams stay stopped after deadlines; synchronous refusal is bounded; successful output clears errors.");
+
+// Any synchronous configure exception is a refusal too, so a TypeError cannot
+// loop forever; a swallowed report is not announced to the page as a frame.
+vm.runInContext(`
+  hevcUnsupported = false; tuned = true; hevcTag = "hvc1"; refusals = 0; refusedFamily = "";
+  VideoDecoder = class { constructor(init) { this.init = init; } configure() { throw new TypeError("bad config"); } close() {} };
+  for (let i = 0; i < 6; i++) { lastResync = -Infinity; openDecoder(hevcTag + ".1.6.L120.B0"); }
+`, context);
+assert.equal(vm.runInContext("hevcUnsupported", context), true);
+assert.equal(vm.runInContext("handleData(sei)", context), false);
+assert.equal(vm.runInContext("handleData(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]))", context), true);
+console.log("Synchronous configure exceptions are bounded; reports are not frames.");
+
+// H.264 has no page fallback: once both of its configs are refused in a row it
+// rests, then retries from the tuned config with a fresh socket, never staying black.
+vm.runInContext(`
+  var timers = [], retried = [];
+  setTimeout = (fn, ms) => { timers.push([fn, ms]); return timers.length; };
+  hevcUnsupported = false; avcUnsupported = false; tuned = true; hevcTag = "hvc1"; refusals = 0; refusedFamily = "";
+  VideoDecoder = class { constructor(init) { this.init = init; } configure() { throw {name: "NotSupportedError", message: "busy"}; } close() {} };
+  self.postMessage = m => { if (m && m.id === "resync") retried.push(m); };
+  lastResync = -Infinity; openDecoder("avc1.640020");
+  var afterFirst = tuned;
+  lastResync = -Infinity; openDecoder("avc1.640020");
+`, context);
+assert.equal(vm.runInContext("afterFirst", context), false);  // tuned -> plain
+assert.equal(vm.runInContext("avcUnsupported", context), true);  // both refused: resting
+assert.equal(vm.runInContext("timers.filter(t => t[1] === AVC_RETRY_AFTER).length", context), 1);
+vm.runInContext(`retried.length = 0; lastResync = -Infinity; resync("timeout");`, context);
+assert.equal(vm.runInContext("retried.length", context), 0);  // no resync loop while resting
+vm.runInContext(`lastResync = -Infinity; timers.find(t => t[1] === AVC_RETRY_AFTER)[0]();`, context);
+assert.equal(vm.runInContext("avcUnsupported === false && tuned && refusals === 0 && retried.length === 1", context), true);
+console.log("Refused H.264 rests and retries from the tuned config instead of staying black.");

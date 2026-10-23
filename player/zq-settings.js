@@ -71,17 +71,10 @@
     hevcSupport.ok = false;
     hevcBlocked = true;
     if (settings.vmode !== 2 || window.__zq.mode !== 2) return;
-    // Verify persistence before reloading. A URL override also works when
-    // storage is blocked, and selecting HEVC explicitly clears the override.
-    const fallback = {...settings, vmode: 1};
-    save(fallback);
-    let stored = false;
-    try { stored = JSON.parse(localStorage.getItem(KEY)).vmode === 1; } catch (e) {}
-    if (stored) location.reload();
-    else {
-      fallbackURL.searchParams.set("zq-h264", "1");
-      location.replace(fallbackURL.href);
-    }
+    // Session-only fallback: a URL flag, never the saved preference, so a new
+    // browser session probes HEVC again and selecting HEVC clears the flag.
+    fallbackURL.searchParams.set("zq-h264", "1");
+    location.replace(fallbackURL.href);
   }
   const hevcReady = (async () => {
     await Promise.resolve(); // __zq is published before a synchronous probe result
@@ -107,10 +100,11 @@
   })();
   if (DEV_PROXY) settings.debug = true;
 
-  // Debug overlay only: read the control socket's session messages (the box's
-  // view of the phone session). One listener on that socket; video is untouched.
+  // Read the control socket's session messages (the box's view of the phone
+  // session) for the debug overlay and the no-video recovery below. One
+  // listener on that socket; video is untouched.
   const ctrl = {state: null, phone: null, boxMode: null, at: 0};
-  if (settings.debug && window.WebSocket) {
+  if (window.WebSocket) {
     const NativeWebSocket = window.WebSocket;
     window.WebSocket = class extends NativeWebSocket {
       constructor(url, protocols) {
@@ -319,7 +313,40 @@
     videoSocket,
     onWorkerSocket,
     workerGone,
+    nudge: 0, // px taken off the INIT height (patched bundle) to force a session restart
+    kicks: 0,
   };
+
+  // No-video recovery. After the phone has run a session with no player
+  // connected for a while (browser closed, adapter booted before the page
+  // opened), HEVC never resumes: a new video socket stays open with zero
+  // messages and the keyframe request gets no answer. A same-size INIT does
+  // not help; an INIT with a different size makes the box restart the CarPlay
+  // session, which recovers. So, when a running session's video socket has
+  // received nothing at all 8 s after opening, resend INIT 2 px shorter (or
+  // back), at most twice per page load, 20 s apart. A still screen after a
+  // working start is untouched: it has received messages.
+  const KICK_AFTER = 8000;
+  const KICK_INTERVAL = 20000;
+  const KICK_LIMIT = 2;
+  let lastKick = -Infinity;
+  setInterval(() => {
+    const s = window.__zq.stats;
+    const now = performance.now();
+    // HEVC only: the blackout has only been seen with HEVC, and an H.264 or JPEG
+    // socket reopened on a still screen can legitimately wait for its first frame.
+    if (!s || settings.sock !== "worker" || window.__zq.mode !== 2 || ctrl.state !== 4) return;
+    // Video messages only: diagnostic reports (e.g. "zq dropped") are not video.
+    if (s.sockState !== 1 || s.sockVideoMsgs !== 0 || !(s.sockAgeMs > KICK_AFTER)) return;
+    if (window.__zq.kicks >= KICK_LIMIT || now - lastKick < KICK_INTERVAL) return;
+    lastKick = now;
+    window.__zq.kicks++;
+    window.__zq.nudge = window.__zq.nudge ? 0 : 2;
+    window.dispatchEvent(new Event("resize")); // the bundle's resize handler resends INIT
+  }, 1000);
+  // A real resize already changes the size (and restarts the session): request
+  // the full height again. Registered before the bundle's own resize handler.
+  window.addEventListener("resize", e => { if (e.isTrusted) window.__zq.nudge = 0; });
 
   const CSS = `
     /* CarPlay gets every touch: no browser pan/zoom gesture detection on the player */
@@ -423,7 +450,7 @@
       `${key} · video input ${ago(s.inputAgeMs)} · params ${s.params ?? "?"} · keys ${s.keys}`,
       sockLine,
       box,
-      `resyncs ${s.resyncs} · gaps ${s.gaps || 0}${s.smooth ? ` · delay ${s.delayMs} ms` : ""}` +
+      `resyncs ${s.resyncs} · gaps ${s.gaps || 0} · restarts ${window.__zq.kicks}${s.smooth ? ` · delay ${s.delayMs} ms` : ""}` +
         ` · mode ${["JPEG", "H.264", "HEVC"][window.__zq.mode]}`,
       ...(s.error ? [`decoder error ${s.error}`] : []),
       ...(s.nativeReports ? [`native ×${s.nativeReports}: ${s.nativeReport}`] : []),
@@ -479,7 +506,7 @@
         ...group("Resolution", "res", RESOLUTIONS, draft, render),
         ...group("Frame rate", "fps", [[30, "30"], [60, "60"]], draft, render),
         ...group("Video", "vmode", NATIVE_HEVC
-          ? [[2, hevcSupport?.ok === false ? "HEVC (retry)" : "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]
+          ? [[2, hevcBlocked ? "HEVC (retry)" : "HEVC (HD)"], [1, "H.264 (HD)"], [0, "JPEG (compatible)"]]
           : [[1, "H.264 (HD)"], [0, "JPEG (compatible)"]], draft, render),
         ...group("Playback", "smooth", [[false, "Low latency"], [true, "Smooth"]], draft, render),
         ...group("Video socket", "sock", [["worker", "Worker (fast)"], ["page", "Page (stock)"]], draft, render),

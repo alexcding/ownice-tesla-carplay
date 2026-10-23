@@ -39,8 +39,9 @@ hostapd.conf asks for HT40. A background loop asks the driver again for 40 MHz t
 change. Verified once on BOX_1189B: 72 -> 150 Mbit/s. If the AP is not ENABLED 5 s after
 a request it reverts to 20 MHz, and re-enables the AP if it is still down. A counter
 (/usr/z-loader/zq-ht40-fails, written before each request, cleared on success) turns
-the fix off for good after two failed boots ("off <webversion>"); flashing a different
-web version clears it. One request per channel per boot: if the AP is restarted on the
+the fix off for good after two failed boots ("off <zq-build>", the version plus a
+content hash; older packages: webversion); flashing a different
+build clears it. One request per channel per boot: if the AP is restarted on the
 same channel it stays at 20 MHz until the next boot.
 
 40 MHz experiment (--wifi-bw40-test, implies --wifi-diag): **changes the radio once.**
@@ -331,15 +332,15 @@ HT40_PATCHES = {
          "\n"
          "#ownice: 40 MHz. The RTL8821CS driver reports 20 MHz when the AP starts (hostapd follows);\n"
          "#ask it again through change_bss_chbw once the AP is up and after each channel change.\n"
-         "#Not ENABLED 5 s later: back to 20 MHz. Two failed boots: off until a new web version is flashed.\n"
+         "#Not ENABLED 5 s later: back to 20 MHz. Two failed boots: off until a different build is flashed.\n"
          "zq_cc=/proc/net/rtl8821cs/wlan0/change_bss_chbw\n"
          "if [ -f $zq_cc ]; then\n"
          "(\n"
-         "\tzq_ver=$(cat /usr/z-loader/webversion 2>/dev/null)\n"
+         "\tzq_ver=$(cat /usr/z-loader/zq-build 2>/dev/null || cat /usr/z-loader/webversion 2>/dev/null)\n"
          f"\tzq_fails=$(cat {HT40_FAILS} 2>/dev/null)\n"
          '\tcase "$zq_fails" in\n'
          '\t\t"off $zq_ver")\n'
-         '\t\t\techo "40 MHz: off after two failed boots (flash a new version to retry)"\n'
+         '\t\t\techo "40 MHz: off after two failed boots (flash a different build to retry)"\n'
          "\t\t\texit 0 ;;\n"
          "\t\toff*)\n"
          f"\t\t\tzq_fails=\n"

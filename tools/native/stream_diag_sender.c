@@ -1,9 +1,10 @@
 #include "stream_diag.h"
+#include "zq_report.h"
 
 /* Reports must never consume a reconnect's first-video checkpoint, even if
  * the checkpoint is reset between the real-frame and report callbacks. */
 static int zq_is_report(const unsigned char *data, unsigned len) {
-    const char *uuid = "ownice-zq-diag01";
+    const char *uuid = ZQ_REPORT_UUID;
     if (!data || len < 25 || data[0] || data[1] || data[2] || data[3] != 1 ||
         data[4] != 0x4e || data[5] != 1 || data[6] != 5 ||
         9u + data[7] != len || data[len - 1] != 0x80) return 0;

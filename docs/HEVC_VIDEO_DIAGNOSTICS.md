@@ -1,7 +1,7 @@
 # HEVC refresh delivery diagnostics
 
-Version naming: current releases use `2.9.11-oc8-hevc`, with `2.9.11-oc8`
-as the default build base. Earlier `3.0-...` strings below identify historical
+Version naming: current builds are plain `2.9.11-ocN` (now `2.9.11-oc12`; see the
+oc12 section at the end). Older `-hevc`/`-hevc-neon` names are historical. Earlier `3.0-...` strings below identify historical
 builds or the installed preview, not a different supported stock-firmware base.
 See [README](../README.md) for current package names and installation commands.
 
@@ -607,3 +607,196 @@ Rollback uses the matching native restore package and saved stock backups, or
 the owner's explicit authorization. No device settings, upload, reboot, commit,
 push or release was performed. Tesla close/reopen, extended idle and hardware
 recovery remain to be validated after an authorized deployment.
+
+#### 2026-10-22: oc12, Tesla evidence, blackout reporting and resize fix
+
+Naming: versions are now plain `2.9.11-ocN` for every package type (no
+`-hevc`, `-neon`, `-vdiag` or `-focus2` suffixes); build options are recorded in
+`hevc-build.json` / `crypto-build.json`. The Codex oc11 candidate above was
+renamed and rebuilt as **`2.9.11-oc12`** after merging main's ChaCha20 NEON
+release work. Installed on the owner's adapter at the time of writing:
+`2.9.11-oc10-hevc-neon` (see [crypto evidence](CRYPTO_RESEARCH.md)); oc12 is
+built, not flashed.
+
+**Case 1: the Tesla browser decodes HEVC (observation).** After an
+owner-run install of `2.9.11-oc9-hevc` and power cycle, photos of the Tesla
+browser (window 773x601 @1.53x) showed `hvc1.1.6.L123.B0` 1392x1080 decoding:
+18–38 fps shown equal to fps received, decode 1–5 ms, queue 0, keyframe ok,
+0 resyncs and 0 frame gaps, box mode 2. The original report ("HEVC not working
+in the Tesla browser") was therefore not browser support; the likeliest causes
+were the missing post-install reboot or a phone that had not reconnected after
+a codec change. Not proven.
+
+**Browser HEVC fallback (safety net, not the cause above).** Chrome has no
+software HEVC decoder. `zq-settings.js` checks `VideoDecoder.isConfigSupported`
+for `hvc1`/`hev1.1.6.L120.B0`; the worker flags HEVC unsupported once every
+decoder configuration is refused. Either result switches mode 2 to H.264 for
+that browser version, without reload loops, blocked-storage loops or a
+permanent ban (Codex review fixes). The phone must still reconnect before the
+codec actually changes.
+
+**Case 2: blackout after a full browser close, not after a reload (observation).**
+Mac Chrome via the dev proxy, HEVC: a normal page reload recovered without a
+phone reconnect (≈20 s later: 638 messages, 2 keyframes; request, phone, sender
+and output checkpoints all recorded the new VPS-led IRAP). Killing and
+relaunching the whole browser left the new video socket open with **0 messages
+for 20 s**, keyframe waiting, and needed a CarPlay restart on the phone. The
+owner reports the same in the Tesla, and that H.264 survives it (owner report;
+not reproduced here). Hypothesis: the longer period with no player connected,
+rather than the reconnect itself, stops the HEVC stream.
+
+The converter (`screen_hevc.c` / `hevc_codec.c`) holds no connection state. Stock
+`ScreenStreamStop` only releases the context's CFData field, which our code never
+sets, and stock and ours return -6714 for unknown properties (rizin disassembly
+of stock `libScreenStream.so`). The only way it drops every frame is a stream
+with no accepted configuration, for example a resumed stream whose `hvcC` our
+parser rejects. The existing "phone" checkpoint sits after conversion, so it cannot
+tell that case from a silent phone.
+
+**oc12 blackout reporting.** Diagnostic builds now also report from the frame
+callback when frames are dropped, once the stream has its dimensions: `zq dropped
+flags=… err=… len=… header=… size=…` on the first drop of a run and every 32nd,
+with no cap. Codex's deferred `zq events` reports still follow the next good
+frame, and its filter keeps reports out of the sender/output checkpoints. The
+Video panel and overlay show them as `Native ×N: …`. Reading a blackout:
+
+| Overlay | Meaning |
+| --- | --- |
+| `zq dropped … header=00000000` | No accepted configuration: our parser rejects the phone's `hvcC` (`flags` bits 10–15 give the rejection code) |
+| `zq dropped …` with a header | Configuration accepted, frames rejected; `err`/`len` say how |
+| no `Native` line | Nothing reached the converter: phone or `libAirPlay` silence |
+
+Reports carry scalars only, not configuration bytes: keeping bytes would need
+state shared across the property and frame threads.
+
+Main's NEON composer pins derived `z-tesla` hashes. Codex's checkpoint filter
+changes only the diagnostic `z-tesla`. Main's pinned diagnostic+focus build
+(`03475fae…`) was reproduced exactly from main's sources and compared with ours.
+The two differ only in the appended RX payload segment and its ELF size fields
+(`e_shoff`, third `PT_LOAD` `p_filesz`/`p_memsz`); every vendor byte and all
+earlier HEVC code are identical. Pinned: `61154fed…` (diag+focus) and
+`37c65d4e…` (diag). `test_crypto_neon.py` passed against the new base. The final
+diag+focus receiver is `8406352…`; the live-tested oc10 value remains in the
+test's comment. Builds without diagnostics still match main's pins.
+
+**Case 3: expanding the Tesla browser from the side window (cause found).** Owner
+report: the usual side window renders correctly. Expanding to full screen
+restarts the picture as a high-resolution image in a smaller box, and nothing is
+clickable. Restoring the side window recovers.
+
+Cause (vendor bundle): `const{w:Fn,h:yt}=a7()` reads the window size once at
+load. A resize resends `INIT` with the new size (`wt()` → `rf()`), and the adapter
+restarts the CarPlay session (observed `session_state 6 → 2 → 3`). The
+`UPDATE_INFO` handler then fits the new stream into the **load-time** size: the
+picture box `s`/`o` and scale `r`, the touch scale `ls` and the offsets `cs`. The
+picture is therefore scaled into the old box, and touches are mapped for the old
+window. Shrinking back matches the load-time size again.
+
+Fix (`tools/player_patches.py`, two exact replacements): `Fn`/`yt` become `let`
+and are re-read in `rf()` before each resize `INIT`. The proxy served the patched
+bundle and a side-size load played HEVC 864x618. After expanding, the restarted
+session sent only a delta frame first (phone checkpoint NAL `0x02`), no keyframe
+in about 60 s, so the new fit could not be confirmed on the Mac. **Needs a Tesla
+side→full-screen test.** The missing keyframe after a session restart is a
+separate open issue, related to Case 2.
+
+Validation: 33 ARM tests (diagnostic build) / 25 + 8 skipped (normal build),
+`test_crypto_release`, `test_crypto_install`, `test_crypto_neon_reports`,
+`test_crypto_neon`, 18 native package install/restore tests, and the
+worker/settings/focus JavaScript regressions all pass. Nothing flashed, rebooted
+or pushed for oc12.
+
+#### 2026-10-22: oc13, automatic no-video recovery and review fixes
+
+**Case 2 reproduced on oc12 (observation).** After an owner power cycle, the phone
+connected before any player was open. The proxy page then showed `session_state 4`,
+an open video socket with **0 messages**, request checkpoint `00000000 00000001
+00000000` (session present, keyframe request returned success), phone/sender/output
+checkpoints **absent**, and **no `Native` report**. Reports pass through the same
+frame callback that the phone checkpoint watches, so nothing at all left the
+converter. Drop reports start only once the stream has its dimensions, so this
+does not fully exclude a converter that never received its size. The evidence
+nevertheless places the stop upstream of our converter: phone or `libAirPlay`
+silence.
+
+**Recovery found (observation).** A same-size `INIT` (the bundle's resize handler
+with no size change) was answered with `session_state 4` and brought no video. A
+real 40 px size change made the box restart the session (`6 → 4`). About 25 s later
+HEVC was back **without a phone reconnect**: `hvc1.1.6.L123.B0` 1904x658, 31 fps,
+2 keyframes, and `zq events flags=00000504`, meaning the converter accepted the
+new `hvcC`. In the same run the canvas filled the new 1900x657 window, which
+confirms the oc12 resize fix on Mac Chrome.
+
+**oc13 automatic recovery (`zq-settings.js`, browser only).** Recovery fires when
+the box reports a running session (`session_state 4`), the worker-owned video
+socket is open, and it has received **no message at all** 8 s after opening. The
+page then resends `INIT` 2 px shorter, or back (`__zq.nudge`, a strict
+`player_patches.py` replacement), so the box restarts the session. At most twice
+per page load, 20 s apart. A still screen after a working start is untouched,
+because it has received messages. The overlay shows `restarts N`. In one live run
+after a 15 s browser absence, video resumed by itself and the recovery correctly
+did not fire. The firing path is covered by `test_settings_codecs.mjs` and still
+awaits a real blackout.
+
+**Review fixes (second `/code-review`):**
+
+- **H.264 after HEVC refusal:** a worker that gave up on HEVC now drops only HEVC
+  input. A later H.264 stream (after the phone reconnects) decodes, with the
+  latency/hardware hints restored.
+- **Consecutive refusals only:** refusals count in a row, and any decoded output
+  resets the count. The fallback chain cycles through tuned → plain → hev1, and
+  HEVC is given up after 3 refusals in a row. Any synchronous `configure`
+  exception counts as a refusal, so it cannot loop forever. H.264 has the same
+  bound.
+- **No saved-preference rewrite:** a runtime refusal falls back for the session
+  only (`?zq-h264=1`). The saved HEVC preference is untouched, and a new browser
+  session probes again.
+- **Atomic diagnostic flags:** `screen_hevc.c` accesses `nal_flags` only through
+  `__atomic_*` operations (inline `ldrex`/`strex`; no library calls). The property
+  thread swaps in the format bits by compare-and-swap, and the frame thread takes
+  pending events with one `fetch_and`. A concurrent configuration change can no
+  longer lose the length size or the HEVC bit. The existing unsynchronised header
+  replacement against an in-flight frame (stock has the same pattern) is unchanged.
+- **Reports are not frames:** swallowed reports no longer send the page a "frame"
+  note. `--native-only --native-video-diag` is refused, because an older preserved
+  player would decode the reports. The report format is defined once in
+  `tools/native/zq_report.h`.
+- **Top-level await only in HEVC builds:** the HEVC-probe startup gate is applied
+  only to `--native-hevc` bundles (and by the dev proxy when the box is native HEVC).
+- **Build identity:** every package carries `usr/z-loader/zq-build`
+  (`<version>+<12-hex content hash>`) and `web/zq-build.txt` (identity plus build
+  options). `tools/flash.sh` waits for that identity, so reflashing the same
+  version can no longer report "done" early. The 40 MHz failure counter is keyed
+  on it, so a rebuilt fix is retried. The restore installer copies both files.
+
+Diagnostic and normal `z-tesla` outputs are unchanged and still match the pins.
+
+Independent review of the oc13 tree (REWORK, fixed before packaging):
+
+- `inspect()` left HEVC mode only on an H.264 SPS header of exactly `0x67`. After
+  an HEVC refusal, an H.264 SPS with another `nal_ref_idc` (`0x27`, which the
+  vendor bundle's key test also accepts) would have kept every H.264 frame
+  dropped. Any `(byte & 0x9f) == 0x07` now counts; as HEVC headers those bytes
+  would need layer id ≥ 32. Covered with a `0x27` case.
+- The no-video watchdog counted diagnostic reports as messages, so a
+  diagnostic build sending `zq dropped` would never restart. It now uses
+  `sockVideoMsgs` (video only).
+- After a stock rollback a leftover `zq-build.txt` is shown by `flash.sh` as
+  `(stale: …)` instead of as the current build.
+
+Follow-up `/code-review high` fixes (also before packaging):
+
+- The no-video recovery runs in **HEVC mode only**. In H.264 or JPEG mode a socket
+  reopened on a still screen may legitimately wait for its first frame. A real
+  (trusted) window resize resets the 2 px nudge, so the next INIT asks for the
+  full height.
+- H.264 decoder refusals no longer block H.264 until a reload. H.264 has no page
+  fallback, so after both of its configs (tuned, plain) are refused in a row it
+  rests for 5 s, then retries from the tuned config with a fresh socket. HEVC
+  still gives up after one try of each of its three configs. Each refusal moves to
+  the next distinct config. The chain only starts over when a config that worked
+  earlier is refused.
+- Build identity semantics: `zq-build` / `zq-build.txt` identify the **last
+  installed package**. A `--native-only` package therefore updates the identity
+  while the previously installed player files stay in place. `checkver.cgi` (and the
+  box's own update check) still sees only the plain version.

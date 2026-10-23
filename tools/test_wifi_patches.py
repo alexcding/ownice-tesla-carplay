@@ -350,9 +350,11 @@ def main():
 
     # 40 MHz fix: request after start, revert on failure, counter, channel change, no-ops.
     ht40_script = build(ht40=True)[wifi_patches.SOFTAP_PATH]
-    def ht40_boot(ch, fails=None, breaks=False, sec=None, hard=False, ver="2.9.11-oc4-ht40"):
+    def ht40_boot(ch, fails=None, breaks=False, sec=None, hard=False, ver="2.9.11-oc4-ht40", build=None):
         root = make_root(ht40_script, conf, ch, ch, None)
         (root / "usr/z-loader/webversion").write_text(f"{ver}\n")
+        if build is not None:
+            (root / "usr/z-loader/zq-build").write_text(f"{build}\n")
         if hard:
             (root / "cc_hard").touch()
         if fails is not None:
@@ -406,6 +408,16 @@ def main():
     stop_watchers(root)
     root = ht40_boot(44, fails="off 2.9.11-oc4-ht40", ver="2.9.11-oc5-ht40")
     check("ht40 off + new version flashed: tries again",
+          wait_for(lambda: cc_text(root) == "44 1 1" and ht40_fails(root) is None), f"{cc_text(root)} {ht40_fails(root)}")
+    stop_watchers(root)
+    # Versions are plain -ocN now: the build identity (version + content hash) keys the retry.
+    root = ht40_boot(44, fails=2, ver="2.9.11-oc13", build="2.9.11-oc13+aaaaaaaaaaaa")
+    time.sleep(0.5)
+    check("ht40 two failed boots: off for this build", ht40_fails(root) == "off 2.9.11-oc13+aaaaaaaaaaaa",
+          f"{ht40_fails(root)}")
+    stop_watchers(root)
+    root = ht40_boot(44, fails="off 2.9.11-oc13+aaaaaaaaaaaa", ver="2.9.11-oc13", build="2.9.11-oc13+bbbbbbbbbbbb")
+    check("ht40 off + same version, different build flashed: tries again",
           wait_for(lambda: cc_text(root) == "44 1 1" and ht40_fails(root) is None), f"{cc_text(root)} {ht40_fails(root)}")
     stop_watchers(root)
     root = ht40_boot(44, hard=True)

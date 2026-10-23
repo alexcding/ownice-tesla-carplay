@@ -1,18 +1,22 @@
 # AGENTS.md
 
-Current device installation: `2.9.11-oc10-hevc-neon`, a crypto-only upgrade of the
-owner's HEVC receiver. The optimized copy passed a five-minute live video/audio/
-touch test and restored the original successfully; permanent install and exact
-HEVC backup were verified. Post-power-cycle activation has not been independently
-recorded. See [crypto evidence](docs/CRYPTO_RESEARCH.md) and
-[the historical HEVC diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md).
+Current device installation: `2.9.11-oc12` (owner-flashed and power-cycled): full
+native HEVC + ChaCha20 NEON receiver with video diagnostics and the side-window →
+full-screen resize fix. HEVC plays in Mac Chrome and in the **Tesla browser**
+(owner photos). Open: an HEVC blackout after the phone ran with no player connected
+for a while (oc13 adds an automatic session restart, built, not flashed) and
+extended idle/return. The NEON copy passed a five-minute live test on the earlier
+`2.9.11-oc10-hevc-neon`; oc12's diagnostic receiver is a new derived base
+(`deployment_validated: false` until confirmed). See
+[the HEVC diagnostic record](docs/HEVC_VIDEO_DIAGNOSTICS.md) and
+[crypto evidence](docs/CRYPTO_RESEARCH.md).
 Current stock-to-package build/install commands are in [README.md](README.md).
 A complete HEVC build includes browser files; use `--native-only` only when
 intentionally preserving an already installed player. Never infer deployment
 authorization from a request to build or push source.
 
-Version naming follows the stock base: `2.9.11-oc11` is the current build default;
-native HEVC builds also append `-hevc-neon`. Increment the `oc` suffix for future changes.
+Version naming follows the stock base: plain `2.9.11-ocN`, currently `2.9.11-oc13`, with no
+feature suffixes (build options live in the package metadata). Increment `oc` for future changes.
 Never reuse the stock `2.9.11` string. Historical `3.0-...` records retain their
 original identifiers; renaming a package does not flash or rename the adapter.
 
@@ -88,7 +92,7 @@ require those operations, explain the dependency and look for an approach within
 - Every patch is an exact string replacement with an expected match count (`tools/player_patches.py`,
   `INDEX_PATCHES` in `tools/build_patch.py`). The firmware build is strict: if the base changes, it must fail,
   not guess.
-- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `2.9.11-oc11` (bump `-oc12`, `-oc13`…). Always keep
+- **Version scheme:** `CUSTOM_VERSION` in `build_patch.py`, currently `2.9.11-oc13` (bump `-oc14`, `-oc15`…). Always keep
   a non-vendor suffix so our `webversion` never equals a stock string — that is what keeps the box's own
   "Check for updates" re-offering stock (it compares current != CDN webver). Full attribution
   (`ownice-tesla-carplay · custom, unofficial · <url>`) shows in the player's Video panel footer.
@@ -101,7 +105,7 @@ require those operations, explain the dependency and look for an approach within
 
 | Path | Purpose |
 |---|---|
-| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default `2.9.11-oc11`); `--native-hevc` includes NEON |
+| `tools/build_patch.py` | download official 2.9.11 zip (MD5-checked), apply patches, write `build/update_tesla.zip` (default `2.9.11-oc13`); `--native-hevc` includes NEON |
 | `tools/player_patches.py` | patch list for `player.html` and the player bundle, shared by build and dev server |
 | `tools/wifi_patches.py` | opt-in (`build_patch.py --wifi-ac`) soft-AP boot-script patches: 802.11ac 80 MHz on a fixed channel, with 802.11n fallback |
 | `tools/tls_patches.py` | default (opt out: `build_patch.py --no-tls-chacha`): z-tesla started with `OPENSSL_CONF` → `usr/z-loader/zq-openssl.cnf`, TLS 1.3 ChaCha20 first with server preference |
@@ -163,8 +167,8 @@ label or receiver version does not establish compatibility or HEVC support.
   5 s), so a native z-tesla change could replace the restart. A focus request while focused gives no IDR.
 - Player sockets (z-tesla, `:5002` etc.) negotiate TLS 1.3 **AES-256-GCM** with stock settings; the T113 (Cortex-A7)
   has no AES instructions. Plain `ws://` is not an option: WebCodecs needs an HTTPS page and Chrome blocks `ws://`
-  from HTTPS. ChaCha20 is the **default** since `3.0-oc5` (`tools/tls_patches.py`; `--no-tls-chacha` → `-aes`
-  builds that ship the stock `z-tesla-sh.sh`, which undoes it). First flashed on BOX_1189B as
+  from HTTPS. ChaCha20 is the **default** since `3.0-oc5` (`tools/tls_patches.py`; `--no-tls-chacha` builds,
+  formerly suffixed `-aes`, ship the stock `z-tesla-sh.sh`, which undoes it). First flashed on BOX_1189B as
   `3.0-oc4-ht40-tls`: after a power cycle ports 5002/9002/7002 negotiate `TLS_CHACHA20_POLY1305_SHA256` against an
   AES-first client, Mac Chrome streams 51–61 fps with 0 frame gaps, and the owner reports the player as "a lot
   faster" (subjective; no before/after Touch→frame numbers yet); one hard-drag run afterwards had 0 frame gaps and

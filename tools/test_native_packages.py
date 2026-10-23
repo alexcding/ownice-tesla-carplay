@@ -81,7 +81,9 @@ class PackageTests(unittest.TestCase):
         before = {path: (self.root / path).read_bytes() for path in paths}
         with zipfile.ZipFile(package) as z:
             self.assertFalse(any(path in z.namelist() for path in paths))
-            self.assertFalse(any("/web/" in path for path in z.namelist()))
+            # Only the build identity (metadata flash.sh waits for) may touch the web root.
+            self.assertEqual([p for p in z.namelist() if "/web/" in p],
+                             ["usr/z-loader/zjinnova/web/zq-build.txt"])
         self.install(package)
         for path, content in before.items():
             self.assertEqual((self.root / path).read_bytes(), content, path)

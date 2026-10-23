@@ -60,12 +60,21 @@ class ReleaseTests(unittest.TestCase):
                         self.assertEqual(tesla['hevc_only_sha256'], manifest['base_sha256'])
                         self.assertEqual(tesla['crypto_neon'], manifest)
                         self.assertEqual(manifest['payload_sha256'], crypto.PAYLOAD_SHA256)
-                        self.assertIn(b'-hevc-neon', archive.read('usr/z-loader/webversion'))
+                        self.assertRegex(archive.read('usr/z-loader/webversion'), rb'^2\.9\.11-oc\d+\n$')
+                        # Plain versions: the build identity says which variant is installed.
+                        ident = archive.read('usr/z-loader/zq-build')
+                        self.assertRegex(ident, rb'^2\.9\.11-oc\d+\+[0-9a-f]{12}\n$')
+                        info = archive.read('usr/z-loader/zjinnova/web/zq-build.txt').decode()
+                        self.assertTrue(info.startswith(ident.decode()))
+                        self.assertIn('native-hevc', info)
+                        self.assertEqual('native-video-diag' in info, diag)
                         self.assertEqual(hashlib.sha256(archive.read('misc/zq-native/OPENSSL-LICENSE')).hexdigest(),
                                          crypto.SOURCES['LICENSE'])
                         if diag and focus:
+                            # oc12 converter-report filter; the live-tested oc10 receiver was
+                            # 43e9b44dba7e87940fcdb1b4bd436973e247760c710799a77648f1f7b0d83c52.
                             self.assertEqual(hashlib.sha256(patched).hexdigest(),
-                                '43e9b44dba7e87940fcdb1b4bd436973e247760c710799a77648f1f7b0d83c52')
+                                '8406352675df0e3ce88d1f06cc35e2ba4d4e3f42e913020b6016a39420ce43da')
 
     def test_web_only_preserves_installed_receiver_and_recovery_exceptions_are_explicit(self):
         with tempfile.TemporaryDirectory(prefix='crypto-preservation-') as temporary:
@@ -76,6 +85,7 @@ class ReleaseTests(unittest.TestCase):
                     self.build(output, *options)
                     with zipfile.ZipFile(output) as archive:
                         self.assertNotIn('usr/z-loader/bin/z-tesla', archive.namelist())
+                        self.assertIn('usr/z-loader/zq-build', archive.namelist())
                         self.assertNotIn('misc/zq-native/crypto-build.json', archive.namelist())
 
     def test_unreviewed_native_base_and_corrupt_source_fail_closed(self):

@@ -21,7 +21,11 @@ SUPPORTED_BASES = {BASE_SHA256: 'stock-2.9.11',
                    HEVC_SHA256: 'hevc-diagnostics-focus-retained-493a699',
                    '9bef3de9c21b64d5dc626a58754fc1d8829326c3a72e3d6a2ff89a4f67ea055b': 'hevc-diagnostics-493a699',
                    '3ccb01b3b6b7226ce7956240f6687dcbf0a0a330c99ebaf8c1d6843439e5b252': 'hevc-493a699',
-                   'dfe0359f10476ddbf8d1e03054c2f9b1cdce0fa0bbf339347ab7adeea2b0b0a6': 'hevc-focus-retained-493a699'}
+                   'dfe0359f10476ddbf8d1e03054c2f9b1cdce0fa0bbf339347ab7adeea2b0b0a6': 'hevc-focus-retained-493a699',
+                   # Converter-report checkpoint filter (diagnostic builds only); reviewed: only
+                   # the appended RX segment and its size fields differ from the 493a699 bases.
+                   '61154fed4ab241168b35eb4b78893d80b78b6e85f9fc54e4f353b682944d556f': 'hevc-diagnostics-focus-retained-oc12',
+                   '37c65d4e57e5b69b5bc5e0749b7ad846adbe68da637c604cebc4c06a4ac5ae36': 'hevc-diagnostics-oc12'}
 ZIP_MD5 = "3a743be56b60df524825cffcf45238cd"
 ENTRY_OFFSET = 0x11B454
 ENTRY_VA = 0x12B454

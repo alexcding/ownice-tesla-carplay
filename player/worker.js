@@ -42,10 +42,23 @@ let canvas = null;
 let ctx = null;
 let decoder = null;
 let codec = "";
-let tuned = true; // cleared once the browser refuses optimizeForLatency/prefer-hardware
+// Decoder configuration fallback. HEVC: tuned hvc1 -> plain hvc1 -> plain hev1;
+// H.264: tuned -> plain. Each refusal moves to the next distinct config; if a
+// config that worked earlier is refused, the chain starts over from the top.
+// Only refusals in a row count, and any decoded output resets the count, so
+// occasional refusals (e.g. a new size after a resize) never add up. At the
+// limit (one try per config) HEVC is given up for this worker, and the page
+// falls back to H.264; H.264 has no fallback, so it backs off and retries.
+// The chain restarts whenever the stream switches between H.264 and HEVC.
+const REFUSAL_LIMIT = {hevc: 3, avc: 2};
+const AVC_RETRY_AFTER = 5000; // ms of rest after the H.264 configs were all refused
+let tuned = true; // false: retry without optimizeForLatency/prefer-hardware
 let hevc = false; // the stream is HEVC (set on its first VPS, reset with the renderer)
 let hevcTag = "hvc1"; // "hev1" once the browser refuses hvc1 for Annex B input
-let hevcUnsupported = false; // the browser refused HEVC with every fallback: the page switches to H.264
+let refusals = 0; // configuration refusals since the last decoded output
+let refusedFamily = ""; // "hevc"/"avc": the family the refusals belong to
+let hevcUnsupported = false; // HEVC refused REFUSAL_LIMIT times in a row: HEVC input is dropped, H.264 still plays
+let avcUnsupported = false; // H.264 refused at its limit: resting until AVC_RETRY_AFTER, then tried again
 let lastError = ""; // last decoder error, for the Video panel and debug overlay
 let waitingForKeyFrame = true;
 let waitingSince = 0;
@@ -81,7 +94,8 @@ const stats = {inFrames: 0, inBytes: 0, shown: 0, late: 0, dropped: 0, resyncs: 
   params: 0};
 // Video socket facts for the debug overlay, counted for every message (JPEG,
 // H.264, HEVC or text alike), since lastInput only moves for compressed video.
-const sockInfo = {openedAt: 0, opens: 0, msgs: 0, bytes: 0, lastClose: ""};
+// videoMsgs: binary messages that were video (diagnostic reports excluded).
+const sockInfo = {openedAt: 0, opens: 0, msgs: 0, videoMsgs: 0, bytes: 0, lastClose: ""};
 // Any video data (JPEG or compressed, worker or page socket), for the overlay;
 // the decoder's own lastInput stays compressed-only for its pause/smooth logic.
 let lastData = 0;
@@ -227,7 +241,10 @@ function inspect(data) {
     else if (data[i + 2] === 0 && data[i + 3] === 1 && i + 4 < n) at = i + 4;
     else continue;
     if (data[at] === 0x40 && data[at + 1] === 0x01) hevc = true;
-    else if (data[at] === 0x67) hevc = false; // H.264 SPS; a reserved type in HEVC
+    // H.264 SPS with any nal_ref_idc (0x07/0x27/0x47/0x67; the bundle's own key
+    // test sees 0x27). As HEVC headers these would need layer id >= 32, which a
+    // single-layer phone stream never uses.
+    else if ((data[at] & 0x9f) === 0x07) hevc = false;
     if (hevc) {
       const type = (data[at] >> 1) & 0x3f;
       if (type === 33) {
@@ -376,27 +393,58 @@ function closeDecoder() {
   prevRefNum = -1; // the next picture used is an IDR
 }
 
+const isHevc = c => /^(hvc1|hev1)\./.test(c);
+
 function openDecoder(newCodec) {
-  if (hevcUnsupported && /^(hvc1|hev1)\./.test(newCodec)) return;
+  const family = isHevc(newCodec) ? "hevc" : "avc";
+  if (family === "hevc" ? hevcUnsupported : avcUnsupported) return;
+  if (refusedFamily && refusedFamily !== family) {
+    // Switched codec (e.g. HEVC -> H.264 after a phone reconnect): HEVC
+    // refusals say nothing about the H.264 decoder.
+    tuned = true;
+    refusals = 0;
+  }
   closeDecoder();
   let d;
-  const onDecoderError = (e) => {
+  // refused: the configuration was rejected (NotSupportedError, or any
+  // synchronous configure exception), as opposed to a mid-stream decode error.
+  const onDecoderError = (e, refused = e.name === "NotSupportedError") => {
     if (decoder !== d) return;
     sendLog(`decode error: ${e.name}: ${e.message}`);
     lastError = `${e.name}: ${e.message}`;
-    if (e.name === "NotSupportedError" && tuned) {
-      tuned = false;
-    } else if (e.name === "NotSupportedError" && hevcTag === "hvc1" && codec.startsWith("hvc1.")) {
-      hevcTag = "hev1";
-    } else if (e.name === "NotSupportedError" && /^(hvc1|hev1)\./.test(codec)) {
-      hevcUnsupported = true;
+    if (refused) {
+      refusedFamily = family;
+      if (++refusals >= REFUSAL_LIMIT[family]) {
+        sendLog(`${family} unsupported by this browser`);
+        if (family === "hevc") hevcUnsupported = true;
+        else {
+          // Possibly temporary (e.g. hardware decoders exhausted): rest, then
+          // start the chain over with a fresh socket instead of a black screen.
+          avcUnsupported = true;
+          setTimeout(() => {
+            avcUnsupported = false;
+            tuned = true;
+            refusals = 0;
+            resync("decoder retry");
+          }, AVC_RETRY_AFTER);
+        }
+      } else if (tuned) {
+        tuned = false;
+      } else if (family === "hevc" && hevcTag === "hvc1") {
+        hevcTag = "hev1"; // the next SPS builds an hev1 string
+      } else {
+        // Reached only when the config that worked before is refused now
+        // (refusals restarted at 0 after its output): start over.
+        tuned = true;
+        hevcTag = "hvc1";
+      }
     }
     closeDecoder();
-    if (!hevcUnsupported) resync("decode error", true);
+    if (!(family === "hevc" ? hevcUnsupported : avcUnsupported)) resync("decode error", true);
   };
   d = new VideoDecoder({
     output(frame) {
-      if (decoder === d) { lastError = ""; onDecoded(frame); }
+      if (decoder === d) { lastError = ""; refusals = 0; onDecoded(frame); }
       else frame.close(); // late output of a replaced decoder
     },
     error: onDecoderError,
@@ -412,9 +460,9 @@ function openDecoder(newCodec) {
       ? {codec: newCodec, optimizeForLatency: true, hardwareAcceleration: "prefer-hardware"}
       : {codec: newCodec});
   } catch (e) {
-    // configure may reject synchronously as well as through error().
-    // Route both failure modes through the same bounded fallback sequence.
-    onDecoderError(e);
+    // configure may reject synchronously as well as through error(); either
+    // way it is a refusal, so it advances the same bounded fallback.
+    onDecoderError(e, true);
     return;
   }
   sendLog(`decoder configured: ${newCodec}${tuned ? "" : " (plain)"}${SMOOTH ? " (smooth)" : ""}`);
@@ -422,7 +470,7 @@ function openDecoder(newCodec) {
 
 // Drop everything queued and ask the page for a fresh video socket (new IDR).
 function resync(reason, retry = false) {
-  if (hevcUnsupported) return;
+  if (hevc ? hevcUnsupported : avcUnsupported) return; // the stream cannot be decoded here
   const now = performance.now();
   // Rate-limit before closing: a resync we requested <1 s ago is still in
   // flight, so closing again here (without re-requesting) would freeze until
@@ -486,7 +534,6 @@ function checkBacklog(now) {
 }
 
 function decodeH264(data, now) {
-  if (hevcUnsupported) return;
   stats.inFrames++;
   if (lastInput && now - lastInput > PAUSE_GAP) {
     self.postMessage({id: "wake", t: performance.timeOrigin + now});
@@ -500,6 +547,9 @@ function decodeH264(data, now) {
   lastInput = now;
 
   const {key, gap, spsCodec} = inspect(data);
+  // Undecodable stream (inspect() has just updated `hevc`): drop it without
+  // resyncing; an H.264 stream after a phone reconnect decodes normally.
+  if (hevc ? hevcUnsupported : avcUnsupported) return;
   if (key) stats.keys++;
   if (spsCodec) stats.params++;
   if (spsCodec && spsCodec !== codec) openDecoder(spsCodec);
@@ -540,6 +590,7 @@ function decodeH264(data, now) {
 
 // Diagnostic native builds report converter events in-band as an HEVC prefix
 // SEI (user_data_unregistered) with this UUID and ASCII text; never decoded.
+// Same format as tools/native/zq_report.h (ZQ_REPORT_UUID).
 const NATIVE_REPORT = "ownice-zq-diag01";
 function nativeReport(d) {
   if (d.length < 25 || d[0] || d[1] || d[2] !== 0 || d[3] !== 1 || d[4] !== 0x4e || d[5] !== 1 || d[6] !== 5) return "";
@@ -555,13 +606,14 @@ function handleData(d) {
     stats.nativeReports = (stats.nativeReports || 0) + 1;
     stats.nativeReport = report;
     sendLog(`native: ${report}`);
-    return;
+    return false;
   }
   stats.inBytes += d.length;
   lastData = performance.now();
   lastJpeg = d.length >= 2 && d[0] === 0xff && d[1] === 0xd8;
   if (lastJpeg) drawJPEG(d);
   else decodeH264(d, lastData);
+  return true;
 }
 
 // Video socket owned by the worker ("worker" socket mode, see zq-settings.js):
@@ -588,7 +640,7 @@ function openSocket(id, url) {
   socket = ws;
   sockInfo.openedAt = performance.now();
   sockInfo.opens++;
-  sockInfo.msgs = sockInfo.bytes = 0;
+  sockInfo.msgs = sockInfo.videoMsgs = sockInfo.bytes = 0;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     if (socket === ws) socketNote("open");
@@ -601,7 +653,9 @@ function openSocket(id, url) {
       return;
     }
     sockInfo.bytes += e.data.byteLength;
-    handleData(new Uint8Array(e.data));
+    // A diagnostic report is not video: the page must not see it as frames arriving.
+    if (!handleData(new Uint8Array(e.data))) return;
+    sockInfo.videoMsgs++;
     const now = performance.now();
     if (now - lastFrameNote >= RENDER_NOTE_INTERVAL) {
       lastFrameNote = now;
@@ -657,6 +711,7 @@ setInterval(() => {
     sockAgeMs: socket ? Math.round(performance.now() - sockInfo.openedAt) : -1,
     sockOpens: sockInfo.opens,
     sockMsgs: sockInfo.msgs,
+    sockVideoMsgs: sockInfo.videoMsgs,
     sockBytes: sockInfo.bytes,
     lastClose: sockInfo.lastClose,
     params: stats.params,

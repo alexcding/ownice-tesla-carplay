@@ -8,6 +8,7 @@ function settings(saved, native) {
   const window = {addEventListener() {}};
   const context = vm.createContext({
     window, URL, location: {href: "https://box/player.html"}, navigator: {maxTouchPoints: 0}, performance: {now: () => 0},
+    setInterval() {},
     document: {body: null, addEventListener() {}},
     localStorage: {getItem: () => typeof saved === "string" ? saved : JSON.stringify(saved)},
   });
@@ -133,14 +134,75 @@ let r = await hevcLoad({probe: false});
 assert.equal(r.window.__zq.mode, 1); assert.equal(r.reloads, 0);
 r = await hevcLoad({probe: true, stale: {ua: "car/1", ok: false, by: "decode"}});
 assert.equal(r.window.__zq.mode, 2); // a previous refusal cannot ban a working decoder
+// A runtime refusal falls back for this session only, through a URL flag: the
+// saved HEVC preference is untouched, so a new browser session probes again.
+const saved = r.store["zq.settings"];
 r.window.__zq.stats = {hevcUnsupported: true};
 r.tick(); r.tick();
-assert.equal(r.reloads, 1); assert.equal(JSON.parse(r.store["zq.settings"]).vmode, 1);
+assert.equal(r.reloads, 0); assert.match(r.replacement, /zq-h264=1/);
+assert.equal(r.store["zq.settings"], saved);
 r = await hevcLoad({probe: true, blocked: true});
 r.window.__zq.stats = {hevcUnsupported: true}; r.tick(); r.tick();
-assert.equal(r.reloads, 0); assert.match(r.replacement, /zq-h264=1/);
+assert.equal(r.reloads, 0); assert.match(r.replacement, /zq-h264=1/);  // works with storage blocked too
 r = await hevcLoad({probe: true, blocked: true, url: r.replacement});
-assert.equal(r.window.__zq.mode, 1); r.tick(); assert.equal(r.replacement, undefined);
+assert.equal(r.window.__zq.mode, 1); r.tick(); assert.equal(r.replacement, undefined);  // no loop
 r = await hevcLoad(); assert.equal(r.window.__zq.mode, 1); // no VideoDecoder
 r = await hevcLoad({probe: Error("temporary")}); assert.equal(r.window.__zq.mode, 2);
 console.log("Startup gates INIT, blocked storage falls back once, and transient refusals do not permanently ban HEVC.");
+
+// No-video recovery: a running session whose video socket got nothing 8 s after
+// opening resends INIT 2 px shorter (a size change restarts the box session),
+// at most twice, 20 s apart; still screens with earlier messages are left alone.
+async function recoveryPage(vmode) {
+  const intervals = [], resizes = [], listeners = {};
+  let now = 0, ctrlSocket = null;
+  class FakeSocket { constructor(url) { this.url = url; this.listeners = []; if (/:9002/.test(url)) ctrlSocket = this; }
+    addEventListener(type, fn) { if (type === "message") this.listeners.push(fn); } }
+  const window = {WebSocket: FakeSocket, VideoDecoder: {isConfigSupported: async () => ({supported: true})},
+    addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+    dispatchEvent(e) { resizes.push([e.type, window.__zq.nudge]); }};
+  const context = vm.createContext({
+    window, URL, Event: class { constructor(type) { this.type = type; } }, setTimeout, clearTimeout,
+    location: {href: "https://box/player.html"}, navigator: {maxTouchPoints: 0},
+    performance: {now: () => now}, document: {body: null, addEventListener() {}},
+    localStorage: {getItem: () => JSON.stringify({vmode})}, setInterval(fn) { intervals.push(fn); },
+  });
+  vm.runInContext(source.replace("const NATIVE_HEVC = false;", "const NATIVE_HEVC = true;"), context);
+  await window.__zq.hevcReady;
+  new window.WebSocket("wss://zbox.link:9002");  // the bundle's control socket, through the wrapper
+  return {window, resizes, listeners, session: state => ctrlSocket.listeners.forEach(fn =>
+    fn({data: JSON.stringify({message_id: 11, session_state: state, phone_type: 5})})),
+    tick: (ms, stats) => { now += ms; window.__zq.stats = stats; intervals.forEach(fn => fn()); }};
+}
+{
+  const page = await recoveryPage(1);  // H.264: a reopened socket may wait for its first frame
+  page.session(4);
+  page.tick(10000, {sockState: 1, sockMsgs: 0, sockVideoMsgs: 0, sockAgeMs: 30000});
+  assert.deepEqual(page.resizes, []);
+}
+{
+  const {window, resizes, listeners, session, tick} = await recoveryPage(2);
+  const dead = age => ({sockState: 1, sockMsgs: 4, sockVideoMsgs: 0, sockAgeMs: age});  // reports only
+  session(4);
+  tick(1000, dead(5000));
+  assert.deepEqual(resizes, []);  // too early
+  tick(1000, {sockState: 1, sockMsgs: 3, sockVideoMsgs: 3, sockAgeMs: 30000});
+  assert.deepEqual(resizes, []);  // video arrived earlier: a still screen, not a dead stream
+  session(6); tick(1000, dead(9000));
+  assert.deepEqual(resizes, []);  // no running session
+  session(4); tick(1000, dead(9000));
+  assert.deepEqual(resizes, [["resize", 2]]);
+  tick(5000, dead(14000));
+  assert.equal(resizes.length, 1);  // 20 s between restarts
+  tick(20000, dead(9000));
+  assert.deepEqual(resizes, [["resize", 2], ["resize", 0]]);
+  tick(30000, dead(9000));
+  assert.equal(resizes.length, 2);  // at most twice per page load
+  assert.equal(window.__zq.kicks, 2);
+  window.__zq.nudge = 2;
+  listeners.resize.forEach(fn => fn({isTrusted: false}));
+  assert.equal(window.__zq.nudge, 2);  // our own synthetic resize keeps the nudge
+  listeners.resize.forEach(fn => fn({isTrusted: true}));
+  assert.equal(window.__zq.nudge, 0);  // a real resize asks for the full height again
+  console.log("No-video recovery restarts a dead session twice at most and leaves still screens alone.");
+}

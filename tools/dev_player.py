@@ -141,7 +141,7 @@ def make_handler(args):
             if path == "/player.html":
                 patches = player_patches.PLAYER_HTML_PATCHES
             elif re.fullmatch(r"/assets/index\.[0-9a-f]+\.js", path):
-                patches = DEV_BUNDLE_PATCHES
+                patches = DEV_BUNDLE_PATCHES + (player_patches.HEVC_BUNDLE_PATCHES if box_native_hevc() else [])
             else:
                 patches = None
             if patches:

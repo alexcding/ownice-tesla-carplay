@@ -14,10 +14,29 @@ PLAYER_HTML_PATCHES = [
      f'<script src="{SETTINGS_SCRIPT}"></script>\n  <script type="module" crossorigin src="/assets/', 1),
 ]
 
-# Values come from window.__zq, defined by player/zq-settings.js.
-BUNDLE_PATCHES = [
+# Native HEVC builds only: hold player startup (and its INIT) until the HEVC
+# capability probe in zq-settings.js settles. Top-level await, so it is kept out
+# of the default package for browsers without it.
+HEVC_BUNDLE_PATCHES = [
     ("wait for HEVC capability probe before player startup",
      "const Gf=function(){", "await window.__zq.hevcReady;const Gf=function(){", 1),
+]
+
+# Values come from window.__zq, defined by player/zq-settings.js.
+BUNDLE_PATCHES = [
+    # Stock reads the window size once at load, then fits every later stream
+    # (UPDATE_INFO: picture size, touch scale/offsets) into that size. Opening in
+    # the side window and expanding left a high-res picture in the old small box
+    # with touches mapped for the old window. Re-read it with each resize INIT.
+    ("window size is live, not fixed at load",
+     "const{w:Fn,h:yt}=a7(),l7=6e3;", "let{w:Fn,h:yt}=a7();const l7=6e3;", 1),
+    ("re-read the window size when a resize resends INIT",
+     'function rf(){te("--- send init msg delay ---"),',
+     'function rf(){({w:Fn,h:yt}=a7()),te("--- send init msg delay ---"),', 1),
+    # No-video recovery (zq-settings.js): a size change makes the box restart
+    # the CarPlay session; __zq.nudge is 0 or 2 px off the requested height.
+    ("INIT height nudge for the no-video session restart",
+     "ae%16!=0&&(ae=ae-ae%16+16);", "ae%16!=0&&(ae=ae-ae%16+16);at-=__zq.nudge|0;", 1),
     ("picture scale factor (stock 0.8)", "Ue=.8", "Ue=__zq.scale", 8),
     ("max stream height (stock 720)", "at>720){var Wf=720*ae/at,$f=720",
      "at>__zq.maxh){var Wf=__zq.maxh*ae/at,$f=__zq.maxh", 1),

@@ -19,10 +19,15 @@ Usage:
     python3 -I tools/build_patch.py --native-test       # + rollback machinery, receiver unchanged
     python3 -I tools/build_patch.py --native-hevc       # experimental CarPlay HEVC + native rollback
     python3 -I tools/build_patch.py --restore-native --out build/restore_native.zip
-    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP (version 2.9.11-oc8-ac)
-    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics (version 2.9.11-oc8-diag)
-    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP (version 2.9.11-oc8-ht40)
-    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS (version 2.9.11-oc8-aes)
+    python3 -I tools/build_patch.py --wifi-ac           # + 802.11ac soft AP
+    python3 -I tools/build_patch.py --wifi-diag         # + Wi-Fi diagnostics
+    python3 -I tools/build_patch.py --wifi-ht40         # + 40 MHz soft AP
+    python3 -I tools/build_patch.py --no-tls-chacha     # stock AES-GCM player TLS
+
+Every variant reports the plain CUSTOM_VERSION (2.9.11-ocN). Each package also
+carries usr/z-loader/zq-build (`<version>+<content hash>`) and, on the web root,
+zq-build.txt with that identity and the build options: tools/flash.sh waits for
+it, and the 40 MHz retry counter is keyed on it.
 """
 
 import argparse
@@ -50,7 +55,7 @@ BASE_WEBVERSION = "2.9.11"
 # current != the CDN's webver, so an always-distinct tag keeps stock rollback
 # working from the box's own UI as well as from tools/flash.sh. Bump oc1->oc2...
 # Project attribution shown in the player lives in player/zq-settings.js.
-CUSTOM_VERSION = "2.9.11-oc11"
+CUSTOM_VERSION = "2.9.11-oc13"
 
 WEB = "usr/z-loader/zjinnova/web"
 INDEX_PATH = f"{WEB}/index.html"
@@ -116,6 +121,8 @@ else
   exit 1
 fi
 cp ./usr/z-loader/webversion "$ROOT/usr/z-loader/webversion" || exit 1
+cp ./usr/z-loader/zq-build "$ROOT/usr/z-loader/zq-build" || exit 1
+cp ./usr/z-loader/zjinnova/web/zq-build.txt "$ROOT/usr/z-loader/zjinnova/web/zq-build.txt" || exit 1
 sync
 """
 
@@ -164,8 +171,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--firmware", help="local copy of the official update zip")
     ap.add_argument("--version",
-                    help=f"web version to report (default {CUSTOM_VERSION}, +'-ac'/'-diag'/'-bw40'/'-ht40' per Wi-Fi option, '-aes' for --no-tls-chacha); "
-                         "keep a non-vendor suffix")
+                    help=f"web version to report (default {CUSTOM_VERSION} for every variant; "
+                         "options are recorded in zq-build.txt); keep a non-vendor suffix")
     ap.add_argument("--wifi-ac", action="store_true",
                     help="also patch the soft-AP boot scripts for 802.11ac 80 MHz")
     ap.add_argument("--wifi-diag", action="store_true",
@@ -186,10 +193,10 @@ def main():
     ap.add_argument("--crypto-source", type=Path,
                     help="pinned OpenSSL sources for HEVC builds (default: verified download/cache in build/crypto-source)")
     ap.add_argument("--native-video-diag", action="store_true",
-                    help="with --native-hevc, expose temporary native video checkpoints (adds -vdiag)")
+                    help="with --native-hevc, expose temporary native video checkpoints and in-band converter reports")
     ap.add_argument("--keep-compressed-video-focus", "--hevc-keep-video-focus",
                     dest="hevc_keep_video_focus", action="store_true",
-                    help="experimental: retain compressed video focus across browser disconnect (adds -focus2)")
+                    help="experimental: retain compressed video focus across browser disconnect")
     ap.add_argument("--native-only", action="store_true",
                     help="with --native-hevc/--native-test, preserve installed player and TLS/Wi-Fi files")
     native.add_argument("--restore-native", action="store_true",
@@ -201,16 +208,15 @@ def main():
         ap.error("--hevc-keep-video-focus requires --native-hevc")
     if args.native_only and not (args.native_hevc or args.native_test):
         ap.error("--native-only requires --native-hevc or --native-test")
+    if args.native_only and args.native_video_diag:
+        # The in-band converter reports need this build's worker.js; an older
+        # preserved player would feed them to its decoder and resync on each.
+        ap.error("--native-video-diag needs a complete build (its reports need the matching player); drop --native-only")
     if args.wifi_bw40_test:
         args.wifi_diag = True  # the experiment reports through the diagnostics file
     if args.version is None:
-        args.version = (CUSTOM_VERSION + ("-ac" if args.wifi_ac else "") + ("-diag" if args.wifi_diag else "")
-                        + ("-bw40" if args.wifi_bw40_test else "") + ("-ht40" if args.wifi_ht40 else "")
-                        + ("" if args.tls_chacha else "-aes")
-                        + ("-vdiag" if args.native_video_diag else "")
-                        + ("-focus2" if args.hevc_keep_video_focus else ""))
-        if args.native_hevc:
-            args.version += "-hevc-neon"
+        # Plain 2.9.11-ocN; build options are recorded in the package metadata, not the name.
+        args.version = CUSTOM_VERSION
 
     base = fetch_base(args.firmware)
     if base.read(WEBVERSION_PATH).decode().strip() != BASE_WEBVERSION:
@@ -221,13 +227,14 @@ def main():
             UPDATE_SH_PATH: (RESTORE_UPDATE_SH, 0o755),
             WEBVERSION_PATH: (args.version + "\n", 0o644),
             f"{NATIVE_META}/restore.sh": ((NATIVE_DIR / "restore.sh").read_text(), 0o755),
-        })
+        }, "restore-native")
         return
 
     files = {
         INDEX_PATH: patch_index(base.read(INDEX_PATH).decode()),
         PLAYER_PATH: player_patches.apply(base.read(PLAYER_PATH).decode(), player_patches.PLAYER_HTML_PATCHES),
-        BUNDLE_PATH: player_patches.apply(base.read(BUNDLE_PATH).decode(), player_patches.BUNDLE_PATCHES),
+        BUNDLE_PATH: player_patches.apply(base.read(BUNDLE_PATH).decode(), player_patches.BUNDLE_PATCHES
+                                          + (player_patches.HEVC_BUNDLE_PATCHES if args.native_hevc else [])),
         WEBVERSION_PATH: args.version + "\n",
     }
     for dest, src in LOCAL_FILES.items():
@@ -293,15 +300,35 @@ def main():
         entries[UPDATE_SH_PATH] = (base.read(UPDATE_SH_PATH), 0o755)
 
     if args.native_only:
-        allowed = set(natives) | {UPDATE_SH_PATH, WEBVERSION_PATH,
+        allowed = set(natives) | {UPDATE_SH_PATH, WEBVERSION_PATH, BUILD_ID_PATH, BUILD_INFO_PATH,
                                   f"{NATIVE_META}/hevc-build.json",
                                   f"{NATIVE_META}/crypto-build.json", f"{NATIVE_META}/OPENSSL-LICENSE",
                                   f"{NATIVE_META}/native.list", f"{NATIVE_META}/restore.sh"}
         entries = {path: value for path, value in entries.items() if path in allowed}
-    write_zip(Path(args.out), args.version, entries)
+    options = ",".join(sorted(k.replace("_", "-") for k, v in vars(args).items() if v is True))
+    write_zip(Path(args.out), args.version, entries, options)
 
 
-def write_zip(out, version, entries):
+BUILD_ID_PATH = "usr/z-loader/zq-build"
+BUILD_INFO_PATH = "usr/z-loader/zjinnova/web/zq-build.txt"
+
+
+def build_identity(version, entries, options):
+    """Versions are plain 2.9.11-ocN for every variant, so each package also
+    carries `<version>+<content hash>` (boot scripts key retries on it;
+    flash.sh waits for it) and, on the web root, its build options."""
+    h = hashlib.sha256()
+    for dest in sorted(entries):
+        content = entries[dest][0]
+        h.update(dest.encode() + b"\0" + (content.encode() if isinstance(content, str) else content) + b"\0")
+    ident = f"{version}+{h.hexdigest()[:12]}"
+    return {BUILD_ID_PATH: (ident + "\n", 0o644),
+            BUILD_INFO_PATH: (f"{ident}\noptions: {options or 'default'}\n", 0o644)}
+
+
+def write_zip(out, version, entries, options=""):
+    entries = {**entries, **build_identity(version, entries, options)}
+
     def entry(name, mode):
         info = zipfile.ZipInfo(name)
         info.external_attr = mode << 16  # unix permissions; default writestr leaves 0
